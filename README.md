@@ -27,7 +27,7 @@ The Cookbook only reads. It never crafts, casts, or opens or closes a profession
 
 *The name is a safe-for-work nod to a certain infamous cookbook from back in the day.* 😉
 
-**Download:** the [GitHub releases page](https://github.com/xclickitx/AlchemistsCookbook/releases) (CurseForge link to follow once the project is approved).
+**Download:** the [GitHub releases page](https://github.com/xclickitx/AlchemistsCookbook/releases) or [CurseForge](https://www.curseforge.com/wow/addons/alchemists-cookbook).
 
 ## Screenshots
 

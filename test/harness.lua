@@ -1,0 +1,449 @@
+-- Mock WoW API harness for Alchemist's Cookbook (modes: modern / legacy options / classic API)
+local MODE = AC_MODE or "modern"
+local chat = {}
+DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) chat[#chat+1] = m end }
+local function clearChat() for i=#chat,1,-1 do chat[i]=nil end end
+local function chatHas(p) for _,m in ipairs(chat) do if m:find(p, 1, true) then return true end end return false end
+local fails, passes = 0, 0
+local function ok(c, name) if c then passes = passes + 1 else fails = fails + 1 print("FAIL: "..name) end end
+
+-- items: id -> name
+local ITEMS = { [2770]="Copper Ore", [2771]="Tin Ore", [2840]="Copper Bar", [3576]="Tin Bar", [2841]="Bronze Bar",
+  [2880]="Weak Flux", [2862]="Rough Sharpening Stone", [2835]="Rough Stone", [6214]="Heavy Copper Maul" }
+local uncached = { [2880] = true }
+local bags = { [2770]=23, [2840]=3, [3576]=4, [2835]=5, [2880]=0 }
+local bank = { [2840]=2, [2880]=1 }
+local function link(id) return "|cffffffff|Hitem:"..id.."::::::::|h["..ITEMS[id].."]|h|r" end
+local byName = {} for id, n in pairs(ITEMS) do byName[n] = id end
+C_Item = {
+  GetItemInfo = function(id)
+    if type(id) == "string" then id = byName[id] end
+    if not id or uncached[id] or not ITEMS[id] then return nil end
+    return ITEMS[id], link(id), 1, 1, 1, "", "", 20, "", 0, 100 + id
+  end,
+  GetItemIconByID = function(id) return 100 + id end,
+  GetItemCount = function(id, inclBank)
+    if type(id) == "string" then id = byName[id] end
+    local b = bags[id] or 0
+    if inclBank then b = b + (bank[id] or 0) end
+    return b
+  end,
+  RequestLoadItemDataByID = function() end,
+}
+Enum = { TradeskillRelativeDifficulty = { Optimal = 0, Medium = 1, Easy = 2, Trivial = 3 }, CraftingReagentType = { Modifying = 0, Basic = 1, Finishing = 2, Automatic = 3 } }
+
+-- Protected / state-changing calls must never happen.
+local forbidden = {}
+local function forbid(name) return function() forbidden[#forbidden+1] = name end end
+
+-- Modern C_TradeSkillUI with switchable open profession.
+local PROFS = {
+  Mining = { base = { professionName = "Mining", professionID = 186, skillLevel = 0, maxSkillLevel = 0 },
+             child = { professionName = "Classic Mining", parentProfessionName = "Mining", professionID = 2572, parentProfessionID = 186, skillLevel = 50, maxSkillLevel = 75 },
+             recipes = {
+               [2657] = { info = { name = "Smelt Copper", learned = true, relativeDifficulty = 0, categoryID = 10, icon = 1 },
+                          sch = { quantityMin = 1, quantityMax = 1, outputItemID = 2840, reagentSlotSchematics = {
+                            { reagents = {{ itemID = 2770 }}, quantityRequired = 1, required = true, reagentType = 1 } } },
+                          req = { { name = "Forge", met = true } } },
+               [2659] = { info = { name = "Smelt Bronze", learned = true, relativeDifficulty = 1, categoryID = 10, icon = 2 },
+                          sch = { quantityMin = 2, quantityMax = 2, outputItemID = 2841, reagentSlotSchematics = {
+                            { reagents = {{ itemID = 2840 }}, quantityRequired = 1, required = true, reagentType = 1 },
+                            { reagents = {{ itemID = 3576 }}, quantityRequired = 1, required = true, reagentType = 1 },
+                            { reagents = {{ itemID = 9999 }}, quantityRequired = 1, required = false, reagentType = 0 } } } },
+               [3304] = { info = { name = "Smelt Tin", learned = false, relativeDifficulty = 0, categoryID = 10 } },
+               [9000] = { info = { name = "Dummy", learned = true, isDummyRecipe = true, categoryID = 10 } },
+             } },
+  Blacksmithing = { base = { professionName = "Blacksmithing", professionID = 164, skillLevel = 80, maxSkillLevel = 150 },
+             child = {},
+             recipes = {
+               [2660] = { info = { name = "Rough Sharpening Stone", learned = true, relativeDifficulty = 3, categoryID = 20, icon = 3 },
+                          sch = { quantityMin = 1, quantityMax = 1, outputItemID = 2862, reagentSlotSchematics = {
+                            { reagents = {{ itemID = 2835 }}, quantityRequired = 1, required = true, reagentType = 1 } } } },
+               [7408] = { info = { name = "Heavy Copper Maul", learned = true, relativeDifficulty = 2, categoryID = 21, icon = 4 },
+                          sch = { quantityMin = 1, quantityMax = 1, outputItemID = 6214, reagentSlotSchematics = {
+                            { reagents = {{ itemID = 2840 }}, quantityRequired = 12, required = true, reagentType = 1 },
+                            { reagents = {{ itemID = 2880 }}, quantityRequired = 2, required = true, reagentType = 1 } } },
+                          req = { { name = "Anvil", met = false } } },
+             } },
+}
+local CATS = { [10] = { name = "Smelting" }, [20] = { name = "Materials" }, [21] = { name = "Weapons" } }
+local open, linked, changing, remaining = nil, false, false, 0
+if MODE ~= "classic" then
+  C_TradeSkillUI = {
+    GetBaseProfessionInfo = function() return open and PROFS[open].base or {} end,
+    GetChildProfessionInfo = function() return open and PROFS[open].child or {} end,
+    GetAllRecipeIDs = function()
+      local t = {} if open then for id in pairs(PROFS[open].recipes) do t[#t+1] = id end end table.sort(t) return t end,
+    GetRecipeInfo = function(id) local r = open and PROFS[open].recipes[id]; if r then local i = {} for k,v in pairs(r.info) do i[k]=v end i.recipeID = id return i end end,
+    GetRecipeSchematic = function(id) local r = open and PROFS[open].recipes[id]; return r and r.sch end,
+    GetRecipeOutputItemData = function(id) local r = open and PROFS[open].recipes[id]; if r and r.sch then return { itemID = r.sch.outputItemID, hyperlink = link(r.sch.outputItemID), icon = 5 } end end,
+    GetRecipeRequirements = function(id) local r = open and PROFS[open].recipes[id]; return r and r.req or {} end,
+    GetCategoryInfo = function(id) return CATS[id] end,
+    IsTradeSkillLinked = function() return linked end,
+    IsTradeSkillGuild = function() return false end,
+    IsNPCCrafting = function() return false end,
+    IsDataSourceChanging = function() return changing end,
+    GetRemainingRecasts = function() return remaining end,
+    CraftRecipe = forbid("CraftRecipe"), OpenTradeSkill = forbid("OpenTradeSkill"), CloseTradeSkill = forbid("CloseTradeSkill"),
+    OpenRecipe = forbid("OpenRecipe"), SetRecipeTracked = forbid("SetRecipeTracked"), SetShowLearned = forbid("SetShowLearned"),
+  }
+else
+  -- classic-era globals
+  local list = {
+    { "Smelting", "header" }, { "Smelt Copper", "optimal", 2770, 1 }, { "Smelt Bronze", "medium", 2840, 1, 3576, 1, made = 2 },
+  }
+  function GetTradeSkillLine() return open and "Mining" or "UNKNOWN", 50, 75 end
+  function GetNumTradeSkills() return open and #list or 0 end
+  function GetTradeSkillInfo(i) local e = list[i]; return e[1], e[2], 0, true end
+  function GetTradeSkillIcon(i) return 10 + i end
+  function GetTradeSkillNumMade(i) local m = list[i].made or 1 return m, m end
+  function GetTradeSkillItemLink(i) return i == 2 and link(2840) or link(2841) end
+  function GetTradeSkillNumReagents(i) return (#list[i] - 2) / 2 end
+  function GetTradeSkillReagentInfo(i, j) local id = list[i][1 + j*2]; return ITEMS[id], 1, list[i][2 + j*2], bags[id] or 0 end
+  function GetTradeSkillReagentItemLink(i, j) return link(list[i][1 + j*2]) end
+  function GetTradeSkillTools(i) return "Forge", true end
+  function DoTradeSkill() forbidden[#forbidden+1] = "DoTradeSkill" end
+  function GetNumCrafts() return 1 end
+  function GetCraftDisplaySkillLine() return "Enchanting", 30, 75 end
+  function GetCraftInfo(i) return "Enchant Bracer - Minor Health", "", "easy", 0, true end
+  function GetCraftIcon() return 9 end
+  function GetCraftNumReagents() return 1 end
+  function GetCraftReagentInfo() return "Copper Ore", 1, 2, 23 end
+  function GetCraftReagentItemLink() return link(2770) end
+  function DoCraft() forbidden[#forbidden+1] = "DoCraft" end
+end
+C_Spell = { GetSpellName = function(id) for _, p in pairs(PROFS) do if p.recipes[id] then return p.recipes[id].info.name end end end }
+local secretIDs = {}
+function issecretvalue(v) return secretIDs[v] == true end
+function CastSpellByName() forbidden[#forbidden+1] = "CastSpellByName" end
+
+local inCombat = false
+function InCombatLockdown() return inCombat end
+local timers = {}
+C_Timer = { After = function(s, f) timers[#timers+1] = { s = s, f = f } end }
+-- Runs short timers (scans, refreshes); long ones (the 8s stale check) only when all == true.
+local function runTimers(all)
+  local n = 0
+  while n < 200 do
+    local idx
+    for i, t in ipairs(timers) do if all or t.s < 5 then idx = i break end end
+    if not idx then break end
+    local t = table.remove(timers, idx); t.f(); n = n + 1
+  end
+end
+local function pendingLong() local c = 0 for _, t in ipairs(timers) do if t.s >= 5 then c = c + 1 end end return c end
+local now = 100
+function GetTime() return now end
+time = os.time
+date = os.date
+UISpecialFrames = {}
+SlashCmdList = {}
+StaticPopupDialogs = {}
+local frames = {}
+local textures = {}
+TEMPLATES_USED = {}
+local tipLink
+local function mkFrame(ftype, name, parent, template)
+  local f = { scripts = {}, events = {}, shown = true, ftype = ftype, name = name, template = template, enabled = true }
+  if template then TEMPLATES_USED[template] = true end
+  setmetatable(f, { __index = function(t, k) return function() end end })
+  f.RegisterEvent = function(self, e) self.events[e] = true end
+  f.RegisterUnitEvent = function(self, e, u) self.events[e] = u end
+  f.UnregisterEvent = function(self, e) self.events[e] = nil end
+  f.SetScript = function(self, k, fn) self.scripts[k] = fn end
+  f.GetScript = function(self, k) return self.scripts[k] end
+  f.Show = function(self) local was = self.shown self.shown = true if not was and self.scripts.OnShow then self.scripts.OnShow(self) end end
+  f.Hide = function(self) local was = self.shown self.shown = false if was and self.scripts.OnHide then self.scripts.OnHide(self) end end
+  f.IsShown = function(self) return self.shown end
+  f.SetText = function(self, t) self.text = t end
+  f.GetText = function(self) return rawget(self, "text") end
+  f.SetChecked = function(self, v) self.checked = v and true or false end
+  f.GetChecked = function(self) return rawget(self, "checked") or false end
+  f.Enable = function(self) self.enabled = true end
+  f.Disable = function(self) self.enabled = false end
+  f.IsEnabled = function(self) return self.enabled end
+  f.SetScale = function(self, s) self.scale = s end
+  f.SetPoint = function(self, ...) self.point = {...} end
+  f.GetPoint = function(self) if self.point then return self.point[1], nil, self.point[3], self.point[4], self.point[5] end end
+  f.ClearFocus = function(self) self.focus = false end
+  f.CreateFontString = function() return mkFrame("FontString") end
+  f.CreateTexture = function()
+    local t = mkFrame("Texture")
+    t.SetTexture = function(self, tex) self.tex = tex return true end
+    t.GetTexture = function(self) return self.tex end
+    textures[#textures+1] = t
+    return t
+  end
+  frames[#frames+1] = f
+  if name then _G[name] = f end
+  return f
+end
+function CreateFrame(...) return mkFrame(...) end
+UIParent = mkFrame("Frame", "UIParent")
+local settingsCat, openedID, legacyOpens = nil, nil, 0
+if MODE ~= "legacy" then
+  Settings = {
+    RegisterCanvasLayoutCategory = function(frame, name) return { frame = frame, name = name, ID = 88, GetID = function(self) return self.ID end } end,
+    RegisterAddOnCategory = function(c) settingsCat = c end,
+    OpenToCategory = function(id) openedID = id; if settingsCat and id == settingsCat.ID then settingsCat.frame:Show() end end,
+  }
+else
+  function InterfaceOptions_AddCategory(p) settingsCat = { frame = p } end
+  function InterfaceOptionsFrame_OpenToCategory(p) legacyOpens = legacyOpens + 1; p:Show() end
+end
+GameTooltip = setmetatable({ SetHyperlink = function(self, l) tipLink = l end, SetItemByID = function(self, id) tipLink = "item:"..id end }, { __index = function() return function() end end })
+Minimap = mkFrame(); Minimap.GetWidth = function() return 140 end; Minimap.GetHeight = function() return 140 end
+
+local chunk = assert(loadfile("../AlchemistsCookbook/AlchemistsCookbook.lua"))
+chunk("AlchemistsCookbook")
+local AC = AlchemistsCookbook
+local ev = AC._ev
+local function fire(e, ...) ev.scripts.OnEvent(ev, e, ...) end
+fire("ADDON_LOADED", "AlchemistsCookbook"); fire("PLAYER_LOGIN")
+ok(AC.VERSION == "1.0.1", "version 1.0.1")
+ok(AlchemistsCookbookDB.scale == 1 and AlchemistsCookbookDB.minimap.hide == false, "account defaults")
+ok(type(AlchemistsCookbookCharDB.professions) == "table", "per-character db")
+ok(ev.events.TRADE_SKILL_SHOW and ev.events.CRAFT_SHOW and ev.events.UNIT_SPELLCAST_START == "player", "events registered (cast events unit-filtered)")
+ok(SlashCmdList.ALCHEMISTSCOOKBOOK and SLASH_ALCHEMISTSCOOKBOOK1 == "/acook" and SLASH_ALCHEMISTSCOOKBOOK2 == "/cookbook", "slash commands")
+ok(BINDING_HEADER_ALCHEMISTSCOOKBOOK == "Alchemist's Cookbook" and BINDING_NAME_ALCHEMISTSCOOKBOOK_TOGGLE, "binding strings")
+local btn = _G.AlchemistsCookbookMinimapButton
+ok(btn and btn.icon.tex == 136240, "minimap button with alchemy icon")
+
+-- nothing saved before a window opens
+ok(#AC.ProfessionNames() == 0, "empty at start")
+
+if MODE == "classic" then
+  open = "Mining"
+  fire("TRADE_SKILL_SHOW"); runTimers()
+  local m = AlchemistsCookbookCharDB.professions.Mining
+  ok(m and #m.recipes == 2 and m.rank == 50 and m.maxRank == 75, "classic scan saved Mining")
+  local bronze = m and m.recipes[2]
+  ok(bronze and bronze.name == "Smelt Bronze" and bronze.numMin == 2 and #bronze.reagents == 2 and bronze.reagents[1].id == 2840 and bronze.header == "Smelting" and bronze.tools[1] == "Forge", "classic recipe details")
+  ok(bronze and bronze.difficulty == "medium" and bronze.itemID == 2841, "classic difficulty + item id")
+  fire("CRAFT_SHOW"); runTimers()
+  local en = AlchemistsCookbookCharDB.professions.Enchanting
+  ok(en and #en.recipes == 1 and en.recipes[1].reagents[1].count == 2 and en.rank == 30, "craft API scan saved Enchanting")
+  ok(select(1, AC.Craftable(en.recipes[1])) == 11, "craftable from craft reagents")
+  ok(#forbidden == 0, "no protected calls (classic)")
+  print(("passes=%d fails=%d"):format(passes, fails))
+  return fails
+end
+
+-- open Mining
+open = "Mining"
+fire("TRADE_SKILL_SHOW"); runTimers()
+local m = AlchemistsCookbookCharDB.professions.Mining
+ok(m ~= nil, "Mining saved")
+ok(m and #m.recipes == 2, "only learned non-dummy recipes ("..(m and #m.recipes or -1)..")")
+ok(m and m.rank == 50 and m.maxRank == 75, "rank from child skill line")
+ok(chatHas("Saved Mining"), "saved message")
+local copper, bronze
+for _, r in ipairs(m.recipes) do if r.id == 2657 then copper = r elseif r.id == 2659 then bronze = r end end
+ok(copper and copper.header == "Smelting" and copper.difficulty == "optimal" and copper.tools[1] == "Forge" and copper.itemID == 2840 and copper.link:find("Copper Bar", 1, true), "copper recipe details")
+ok(bronze and bronze.numMin == 2 and #bronze.reagents == 2 and bronze.difficulty == "medium", "bronze makes 2, optional reagent skipped")
+ok(bronze.reagents[1].name == "Copper Bar" and bronze.reagents[1].link and bronze.reagents[1].count == 1, "reagent name/link/count")
+
+-- counts
+ok(AC.Craftable(copper) == 23, "can smelt 23 copper")
+local b, a = AC.Craftable(bronze); ok(b == 3 and a == 4, "bronze bags 3 / bank 4 (tin limits) ("..b.."/"..a..")")
+local bb, ab = AC.CountItem(2840); ok(bb == 3 and ab == 5, "CountItem bags/bank")
+
+-- linked window / data changing are not saved; empty scans never overwrite
+linked = true; open = "Blacksmithing"; fire("TRADE_SKILL_SHOW"); runTimers()
+ok(AlchemistsCookbookCharDB.professions.Blacksmithing == nil, "linked profession not saved")
+linked = false
+changing = true; fire("TRADE_SKILL_SHOW"); runTimers()
+ok(AlchemistsCookbookCharDB.professions.Blacksmithing == nil, "busy data source not saved")
+changing = false
+fire("TRADE_SKILL_SHOW"); runTimers()
+local bs = AlchemistsCookbookCharDB.professions.Blacksmithing
+ok(bs and #bs.recipes == 2 and bs.rank == 80 and bs.maxRank == 150, "Blacksmithing saved, base rank")
+local maul; for _, r in ipairs(bs.recipes) do if r.id == 7408 then maul = r end end
+ok(maul and maul.reagents[2].name == nil, "uncached reagent has no name yet")
+ok(#AC.ProfessionNames() == 2 and AC.ProfessionNames()[1] == "Blacksmithing", "two professions, sorted")
+local saveMining = AlchemistsCookbookCharDB.professions.Mining
+open = nil; fire("TRADE_SKILL_SHOW"); runTimers()
+ok(AlchemistsCookbookCharDB.professions.Mining == saveMining, "closed/empty scan keeps saved data")
+-- list-update throttle: within 5s ignored
+open = "Mining"; now = 101; local calls = #timers; fire("TRADE_SKILL_LIST_UPDATE"); ok(#timers == calls, "LIST_UPDATE throttled"); now = 120
+fire("TRADE_SKILL_LIST_UPDATE"); ok(#timers == calls + 1, "LIST_UPDATE rescans after 5s"); runTimers()
+ok(AlchemistsCookbookCharDB.professions.Mining ~= saveMining, "rescan replaced data")
+
+-- re-read after rescan
+m = AlchemistsCookbookCharDB.professions.Mining
+for _, r in ipairs(m.recipes) do if r.id == 2657 then copper = r elseif r.id == 2659 then bronze = r end end
+-- search
+ok(AC.Matches(bronze, "tin") and AC.Matches(bronze, "BRONZE") and not AC.Matches(copper, "tin"), "search by name + reagent, case-insensitive")
+uncached[2880] = nil
+ok(AC.Matches(maul, "flux") and maul.reagents[2].name == "Weak Flux", "search resolves late item names")
+-- rows / collapse
+local rows = AC.BuildRows("Blacksmithing", "")
+ok(#rows == 4 and rows[1].header == "Materials" and rows[3].header == "Weapons", "rows with headers")
+AC.ToggleHeader("Blacksmithing", "Weapons")
+rows = AC.BuildRows("Blacksmithing", ""); ok(#rows == 3 and rows[3].collapsed, "collapsed header hides recipes")
+rows = AC.BuildRows("Blacksmithing", "maul"); ok(#rows == 2 and rows[2].recipe == maul, "search shows collapsed matches, hides empty headers")
+AC.ToggleHeader("Blacksmithing", "Weapons")
+
+-- window
+clearChat()
+SlashCmdList.ALCHEMISTSCOOKBOOK("")
+local F = _G.AlchemistsCookbookFrame
+ok(F and F:IsShown(), "/acook opens window")
+ok(UISpecialFrames[1] == "AlchemistsCookbookFrame", "Esc closes (UISpecialFrames)")
+local U = AC._ui
+ok(U.tabs[1]:IsShown() and U.tabs[2]:IsShown() and U.tabs[1].text == "Blacksmithing" and not U.tabs[1]:IsEnabled(), "profession tabs")
+U.tabs[2].scripts.OnClick(U.tabs[2]); ok(U.rank.text == "Mining 50/75", "tab switch to Mining")
+ok(AC._rows[1].header == "Smelting" and #AC._rows == 3, "Mining rows")
+local copperRow; for _, r in ipairs(U.rows) do local d = rawget(r, "data") if d and d.recipe == copper then copperRow = r end end
+ok(copperRow and copperRow.count.text == "[23]", "row shows craftable count")
+copperRow.scripts.OnEnter(copperRow); ok(tipLink and tipLink:find("item:2840", 1, true), "row tooltip from stored link")
+copperRow.scripts.OnClick(copperRow)
+ok(U.reagents[1]:IsShown() and U.reagents[1].have.text:find("have 23|r / need 1", 1, true), "reagent have/need")
+ok(U.dCraft.text == "You can make 23 now.", "craft-now line")
+ok(U.dTools.text == "Requires: Forge", "tools line")
+U.reagents[1].scripts.OnEnter(U.reagents[1]); ok(tipLink and tipLink:find("item:2770", 1, true), "reagent tooltip")
+local bronzeRow; for _, r in ipairs(U.rows) do local d = rawget(r, "data") if d and d.recipe == bronze then bronzeRow = r end end
+bronzeRow.scripts.OnClick(bronzeRow)
+ok(U.dCraft.text == "You can make 3 now (4 counting your bank).", "bank-aware craft line")
+ok(U.reagents[1].have.text:find("+2 bank", 1, true) ~= nil, "bank count shown on reagent")
+ok(#U.reagents == 2 and U.reagents[2]:IsShown(), "two reagent rows")
+-- selection survives a rescan while the window is open
+open = "Mining"; now = now + 10; fire("TRADE_SKILL_SHOW"); runTimers(); open = nil
+ok(U.dCraft.text == "You can make 3 now (4 counting your bank)." and U.reagents[2]:IsShown(), "selection kept after rescan")
+-- live update on bag change
+bags[2840] = 10
+F.scripts.OnEvent(F, "BAG_UPDATE_DELAYED"); runTimers()
+ok(U.dCraft.text == "You can make 4 now.", "refresh on bag update ("..tostring(U.dCraft.text)..")")
+ok(F.events.BAG_UPDATE_DELAYED, "bag events while shown")
+-- search box
+U.search:SetText("tin"); U.search.scripts.OnTextChanged(U.search)
+do local s = {} for _, r in ipairs(AC._rows) do s[#s+1] = r.header or r.recipe.name end ok(#AC._rows == 2 and AC._rows[2].recipe.id == 2659, "search box filters: "..table.concat(s, ",")) end
+U.search:SetText(""); U.search.scripts.OnTextChanged(U.search)
+-- header click collapses
+U.rows[1].scripts.OnClick(U.rows[1]); ok(#AC._rows == 1 and AC._rows[1].collapsed, "header click collapses")
+U.rows[1].scripts.OnClick(U.rows[1]); ok(#AC._rows == 3, "header click expands")
+-- toggle / esc / keybind
+SlashCmdList.ALCHEMISTSCOOKBOOK(""); ok(not F:IsShown() and not F.events.BAG_UPDATE_DELAYED, "/acook toggles closed, events off")
+AlchemistsCookbook_Binding("toggle"); ok(F:IsShown(), "keybind opens")
+btn.scripts.OnClick(btn, "LeftButton"); ok(not F:IsShown(), "minimap left-click toggles")
+SlashCmdList.ALCHEMISTSCOOKBOOK("black"); ok(F:IsShown() and U.rank.text == "Blacksmithing 80/150", "/acook black opens that profession")
+-- drag saves position
+F.point = { "TOPLEFT", nil, "TOPLEFT", 50, -60 }; F.scripts.OnDragStop(F)
+ok(AlchemistsCookbookDB.pos and AlchemistsCookbookDB.pos[3] == 50, "position saved")
+SlashCmdList.ALCHEMISTSCOOKBOOK("scale 120"); ok(AlchemistsCookbookDB.scale == 1.2 and F.scale == 1.2, "scale 120%")
+SlashCmdList.ALCHEMISTSCOOKBOOK("scale 999"); ok(AlchemistsCookbookDB.scale == 1.5, "scale clamped")
+SlashCmdList.ALCHEMISTSCOOKBOOK("reset"); ok(AlchemistsCookbookDB.pos == nil and AlchemistsCookbookDB.scale == 1 and F.point[1] == "CENTER", "reset position")
+clearChat(); SlashCmdList.ALCHEMISTSCOOKBOOK("list"); ok(chatHas("Mining: 2 recipes, skill 50/75"), "list")
+clearChat(); SlashCmdList.ALCHEMISTSCOOKBOOK("help"); ok(chatHas("/acook forget"), "help")
+SlashCmdList.ALCHEMISTSCOOKBOOK("minimap"); ok(AlchemistsCookbookDB.minimap.hide and not btn:IsShown(), "minimap hide")
+SlashCmdList.ALCHEMISTSCOOKBOOK("minimap"); ok(not AlchemistsCookbookDB.minimap.hide and btn:IsShown(), "minimap show")
+
+-- settings page
+local P = AC.panel
+ok(P and settingsCat and settingsCat.frame == P, "settings category registered")
+P:Hide(); SlashCmdList.ALCHEMISTSCOOKBOOK("options"); ok(P:IsShown(), "/acook options opens page")
+local PU = AC._pui
+ok(PU.minimap:GetChecked() == true and PU.scale.text == "100%", "panel reflects settings")
+PU.minimap:SetChecked(false); PU.minimap.scripts.OnClick(PU.minimap); ok(AlchemistsCookbookDB.minimap.hide, "panel minimap toggle")
+PU.minimap:SetChecked(true); PU.minimap.scripts.OnClick(PU.minimap)
+PU.plus.scripts.OnClick(PU.plus); ok(AlchemistsCookbookDB.scale == 1.05 and PU.scale.text == "105%", "panel + scale")
+PU.minus.scripts.OnClick(PU.minus); PU.minus.scripts.OnClick(PU.minus); ok(AlchemistsCookbookDB.scale == 0.95, "panel - scale")
+AlchemistsCookbookDB.pos = { "TOP", "TOP", 1, 1 }
+PU.reset.scripts.OnClick(PU.reset); ok(AlchemistsCookbookDB.pos == nil and AlchemistsCookbookDB.scale == 1, "panel reset position")
+ok(PU.saved.text:find("Mining (2 recipes, 50/75)", 1, true), "panel lists saved professions")
+P:Hide(); btn.scripts.OnClick(btn, "RightButton"); ok(P:IsShown(), "minimap right-click opens settings")
+P:Hide(); inCombat = true; SlashCmdList.ALCHEMISTSCOOKBOOK("options"); ok(not P:IsShown(), "no settings in combat"); inCombat = false
+-- browsing works in combat (plain frames only)
+inCombat = true; F:Hide(); SlashCmdList.ALCHEMISTSCOOKBOOK("show"); ok(F:IsShown(), "window opens in combat"); inCombat = false
+
+-- repeat-craft status line (1.0.1: done counter, batch-size math)
+F:Show()
+local function castOnce(spell, guid, rem, opts)
+  opts = opts or {}
+  now = now + 3
+  remaining = rem
+  fire("UNIT_SPELLCAST_START", "player", guid, spell)
+  if opts.rescan then open = "Mining"; now = now + 10; fire("TRADE_SKILL_LIST_UPDATE"); runTimers(); open = nil end
+  if not opts.noSucceeded then fire("UNIT_SPELLCAST_SUCCEEDED", "player", guid, spell) end
+  if opts.chat then fire("CHAT_MSG_LOOT", "You create: "..link(opts.chat)..".", "Click It") end
+  if opts.lagRemaining then remaining = rem else remaining = math.max(rem - 1, 0) end
+end
+-- the user's case: Smelt Copper x5 with the Mining window open (rescans every craft)
+castOnce(2657, "g1", 4, { rescan = true, chat = 2840 })
+ok(AC.cast.active and AC.cast.made == 1 and AC.cast.total == 5, "after 1st: 1 of 5 (made "..AC.cast.made..")")
+ok(U.castLine.text:find("1 of 5 done, 4 left", 1, true) and U.castLine.text:find("Copper Bar", 1, true), "line: "..tostring(U.castLine.text))
+now = now + 3; remaining = 3; fire("UNIT_SPELLCAST_START", "player", "g2", 2657)
+ok(U.castLine.text:find("1 of 5 done, 4 left", 1, true), "during 2nd cast: still 1 done, 4 left incl. current")
+fire("UNIT_SPELLCAST_SUCCEEDED", "player", "g2", 2657); fire("CHAT_MSG_LOOT", "You create: "..link(2840)..".", "Click It")
+ok(AC.cast.made == 2, "cast + chat for one craft counts once ("..AC.cast.made..")")
+-- chat arriving before SUCCEEDED also counts once
+now = now + 3; remaining = 2; fire("UNIT_SPELLCAST_START", "player", "g2b", 2657); fire("CHAT_MSG_LOOT", "You create: "..link(2840)..".", "Click It"); fire("UNIT_SPELLCAST_SUCCEEDED", "player", "g2b", 2657)
+ok(AC.cast.made == 3, "chat-then-succeeded counts once ("..AC.cast.made..")")
+AC.cast.made = 2; AC.cast.counted["g2b"] = nil -- undo so the rest of the batch below stays 5 long
+castOnce(2657, "g3", 2, { rescan = true, lagRemaining = true, chat = 2840 }) -- client value lags
+ok(AC.cast.made == 3 and AC.cast.total == 5 and U.castLine.text:find("3 of 5 done, 2 left", 1, true), "lagging remaining ignored: "..tostring(U.castLine.text))
+castOnce(2657, "g4", 2, { chat = 2840 }) -- lag: client still says 2 at start of 4th
+ok(AC.cast.total == 5 and AC.cast.made == 4, "lag at start does not start a new batch")
+castOnce(2657, "g5", 0, { chat = 2840 })
+ok(not AC.cast.active and U.castLine.text == "", "batch done after 5 of 5 -> line clears")
+-- new batch of 4 right after, counted from 0 again
+castOnce(2657, "h1", 3, {})
+ok(AC.cast.active and AC.cast.total == 4 and AC.cast.made == 1, "new batch of 4 starts fresh")
+-- fallback: SUCCEEDED never arrives, chat lines count
+castOnce(2657, "h2", 2, { noSucceeded = true, chat = 2840 })
+ok(AC.cast.made == 2, "chat fallback counts when no SUCCEEDED ("..AC.cast.made..")")
+-- chat for a different item / other wording is ignored
+fire("CHAT_MSG_LOOT", "You create: "..link(2841)..".", "Click It"); ok(AC.cast.made == 2, "other item ignored")
+fire("CHAT_MSG_LOOT", "You receive loot: "..link(2840)..".", "Click It"); ok(AC.cast.made == 2, "loot lines ignored")
+-- interrupt (jump) ends it; FAILED from an unrelated cast GUID doesn't
+remaining = 1; fire("UNIT_SPELLCAST_START", "player", "h3", 2657)
+fire("UNIT_SPELLCAST_FAILED", "player", "other", 2657); ok(AC.cast.active, "failed for another cast GUID ignored")
+fire("UNIT_SPELLCAST_INTERRUPTED", "player", "h3", 2657); ok(not AC.cast.active and U.castLine.text == "", "jump/interrupt clears line")
+-- stale: batch stops without an event (e.g. ran out of ore) -> clears after 8s
+castOnce(2657, "k1", 4, {})
+ok(AC.cast.active and pendingLong() > 0, "stale check scheduled after a completion")
+runTimers(true); ok(not AC.cast.active and U.castLine.text == "", "stale batch clears")
+-- stale check does not end a batch that is still casting
+castOnce(2657, "k2", 4, {}); remaining = 3; fire("UNIT_SPELLCAST_START", "player", "k3", 2657)
+runTimers(true); ok(AC.cast.active, "stale check keeps a batch that is mid-cast")
+fire("UNIT_SPELLCAST_INTERRUPTED", "player", "k3", 2657)
+-- multi-output recipe (Bronze x2): one chat line per craft, shows x2
+castOnce(2659, "b1", 1, { noSucceeded = true })
+fire("CHAT_MSG_LOOT", "You create: "..link(2841).."x2.", "Click It")
+ok(AC.cast.made == 1 and U.castLine.text:find("x2", 1, true) and U.castLine.text:find("1 of 2 done, 1 left", 1, true), "bronze x2: "..tostring(U.castLine.text))
+fire("UNIT_SPELLCAST_INTERRUPTED", "player", "b1", 2659)
+-- no remaining-recasts API at all: shows a plain done count
+local saveRR = C_TradeSkillUI.GetRemainingRecasts; C_TradeSkillUI.GetRemainingRecasts = nil
+fire("UNIT_SPELLCAST_START", "player", "n1", 2657); fire("UNIT_SPELLCAST_SUCCEEDED", "player", "n1", 2657)
+ok(AC.cast.total == nil and U.castLine.text:find(": 1 done", 1, true), "no recast API: "..tostring(U.castLine.text))
+fire("UNIT_SPELLCAST_START", "player", "n2", 2657); fire("UNIT_SPELLCAST_INTERRUPTED", "player", "n2", 2657)
+C_TradeSkillUI.GetRemainingRecasts = saveRR
+-- other units / non-recipe / secret
+fire("UNIT_SPELLCAST_START", "target", "x", 2657); ok(not AC.cast.active, "other units ignored")
+fire("UNIT_SPELLCAST_START", "player", "x", 133); ok(not AC.cast.active, "non-recipe spells ignored")
+secretIDs[2657] = true; fire("UNIT_SPELLCAST_START", "player", "x", 2657); ok(not AC.cast.active, "secret values ignored"); secretIDs[2657] = nil
+ok(ev.events.CHAT_MSG_LOOT and ev.events.CHAT_MSG_TRADESKILLS, "chat events registered")
+ok(AC.ParseCreated("You create: "..link(2840)..".") == 2840 and AC.ParseCreated("Bob creates: "..link(2840)) == nil, "ParseCreated")
+LOOT_ITEM_CREATED_SELF = "Vous créez : %s."; ok(AC.ParseCreated("Vous créez : "..link(2840)..".") == 2840, "localized create line"); LOOT_ITEM_CREATED_SELF = nil
+runTimers(true)
+
+-- forget
+clearChat(); SlashCmdList.ALCHEMISTSCOOKBOOK("forget mining"); ok(AlchemistsCookbookCharDB.professions.Mining == nil and chatHas("Forgot Mining"), "forget")
+SlashCmdList.ALCHEMISTSCOOKBOOK("forget nothing"); ok(#AC.ProfessionNames() == 1, "forget unknown is safe")
+
+-- reload: saved vars survive InitDB
+local saved, savedC = AlchemistsCookbookDB, AlchemistsCookbookCharDB
+local a2, c2 = AC.InitDB(saved, savedC); ok(c2.professions.Blacksmithing and a2.minimap, "reload keeps data")
+local a3 = AC.InitDB({ scale = 9 }, nil); ok(a3.scale == 1, "bad scale fixed")
+AC.InitDB(saved, savedC)
+
+-- never a protected or state-changing call
+ok(#forbidden == 0, "no protected calls: "..table.concat(forbidden, ","))
+for t in pairs(TEMPLATES_USED) do
+  local allowed = { BackdropTemplate=1, UIPanelCloseButton=1, UIPanelScrollFrameTemplate=1, InputBoxTemplate=1, UIPanelButtonTemplate=1, UICheckButtonTemplate=1 }
+  ok(allowed[t], "template used by other Forever add-ons: "..t)
+  ok(not t:find("Secure"), "no secure templates")
+end
+if MODE == "legacy" then ok(legacyOpens == 4 or legacyOpens > 0, "legacy options path") end
+print(("passes=%d fails=%d"):format(passes, fails))
+return fails

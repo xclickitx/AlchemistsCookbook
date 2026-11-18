@@ -1,0 +1,28 @@
+# BigWigs packager / CurseForge metadata
+# https://github.com/BigWigsMods/packager
+#
+# Addon sources live in AlchemistsCookbook/ (so the repository is easy to browse).
+# The hand-built player zip (AlchemistsCookbook-1.0.1.zip) has that folder at
+# the top level: AlchemistsCookbook/AlchemistsCookbook.toc, not
+# AlchemistsCookbook/AlchemistsCookbook/...
+#
+# If you later run BigWigs packager against this repository, point it at the
+# AlchemistsCookbook subdirectory (or flatten the toc/lua/xml to the repo root)
+# so the zip does not nest an extra folder. package-as must match the folder
+# and toc name.
+package-as: AlchemistsCookbook
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+# Do not ship tests, repo docs, or git metadata inside the player zip.
+ignore:
+  - test
+  - screenshots
+  - CURSEFORGE.md
+  - DESCRIPTION.md
+  - README.md
+  - CHANGELOG.md
+  - .gitignore
+  - .github

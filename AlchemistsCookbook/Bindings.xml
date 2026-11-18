@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="ALCHEMISTSCOOKBOOK_TOGGLE" header="ALCHEMISTSCOOKBOOK" category="ADDONS">
+		AlchemistsCookbook_Binding("toggle")
+	</Binding>
+</Bindings>

@@ -18,6 +18,9 @@ Alchemist's Cookbook fixes that. Every time you open a profession, it quietly sa
 2. Open each of your professions once the normal way, so the Cookbook can save it.
 3. Start a long craft, open the Cookbook, and browse to your heart's content.
 
+**Grows with you:** every time you open a profession, the Cookbook re-saves it, so new recipes and skill-ups are picked up automatically. Perfect for low-level characters too. Start with a handful of recipes and the Cookbook fills in as you level.
+
+
 ## Safe by design
 The Cookbook only reads. It never crafts, casts, or opens or closes a profession window, so it can't interrupt what you're making. It's built for WoW Forever, and it's free and MIT licensed.
 

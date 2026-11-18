@@ -2,6 +2,13 @@
 
 All notable changes to Alchemist's Cookbook are listed here.
 
+## 1.0.3
+
+- Fixed: item tooltips in the Cookbook could compare against the wrong gear. While crafting (for example smelting with the Mining window open), hovering a weapon could show "Equipped With: Mining Pick" and a "Press SHIFT-C to cycle through your main-hand items" line, because the game paired the item with the profession tool in your bags.
+- Cookbook item tooltips now compare only with what you're actually wearing in that item's slot: main hand and off hand for weapons, off hand for shields and held items, both slots for rings and trinkets. Profession tools and other items in your bags are never used.
+- The compare follows the default UI's rule: it shows while you hold Shift (or your compare key), or all the time if you have "always compare items" turned on. It updates when you press or release Shift or change gear.
+- The Cookbook now shows item tooltips in its own tooltip window instead of the game's main one, so it never touches the game's built-in compare.
+
 ## 1.0.2
 
 - New recipe filters, as small checkboxes next to the search box and on the settings page:

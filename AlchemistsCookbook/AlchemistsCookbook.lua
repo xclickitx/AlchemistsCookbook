@@ -1,4 +1,4 @@
--- Alchemist's Cookbook 1.0.2 by ClickIT, for WoW Forever (Interface 16001).
+-- Alchemist's Cookbook 1.0.3 by ClickIT, for WoW Forever (Interface 16001).
 --
 -- Opening a second profession window closes the first one, and that cancels a
 -- repeat craft (smelting x20, potions xN). Alchemist's Cookbook saves each
@@ -24,7 +24,7 @@ ADDON = ADDON or "AlchemistsCookbook"
 
 local AC = {}
 _G.AlchemistsCookbook = AC
-AC.VERSION = "1.0.2"
+AC.VERSION = "1.0.3"
 AC.NAME = "Alchemist's Cookbook"
 
 local floor, format, tonumber, tostring, type, select = math.floor, string.format, tonumber, tostring, type, select
@@ -777,21 +777,184 @@ local selectedProf, selectedRecipe
 local ROW_H = 16
 local LIST_W = 250
 
-local function tooltipFor(owner, link, itemID)
-	if not GameTooltip then return end
-	GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-	if link and link:find("|H", 1, true) then
-		pcall(GameTooltip.SetHyperlink, GameTooltip, link:match("|H(.-)|h") or link)
-	elseif itemID then
-		if GameTooltip.SetItemByID then pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
-		else pcall(GameTooltip.SetHyperlink, GameTooltip, "item:" .. itemID) end
-	else
-		return GameTooltip:Hide()
-	end
-	GameTooltip:Show()
+-- Item tooltips use our own tooltip frame, not GameTooltip. Only GameTooltip has
+-- Blizzard's automatic compare turned on (supportsItemComparison), and on Forever
+-- that compare can pair the item with a profession tool from your bags (Mining
+-- Pick as "Equipped With") while you craft. So Blizzard's compare never runs for
+-- Cookbook items; we draw our own compare from the gear you actually have on
+-- (GetInventoryItemLink), using the same rule as the default UI: shift held, or
+-- "always compare items" on. Nothing here touches GameTooltip, ShoppingTooltip1/2
+-- or the comparison manager, so there is nothing to taint.
+local SLOTS_FOR = {
+	INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 }, INVTYPE_BODY = { 4 },
+	INVTYPE_CHEST = { 5 }, INVTYPE_ROBE = { 5 }, INVTYPE_WAIST = { 6 }, INVTYPE_LEGS = { 7 },
+	INVTYPE_FEET = { 8 }, INVTYPE_WRIST = { 9 }, INVTYPE_HAND = { 10 },
+	INVTYPE_FINGER = { 11, 12 }, INVTYPE_TRINKET = { 13, 14 }, INVTYPE_CLOAK = { 15 },
+	INVTYPE_WEAPON = { 16, 17 }, INVTYPE_2HWEAPON = { 16, 17 }, INVTYPE_WEAPONMAINHAND = { 16 },
+	INVTYPE_WEAPONOFFHAND = { 17 }, INVTYPE_SHIELD = { 17 }, INVTYPE_HOLDABLE = { 17 },
+	INVTYPE_RANGED = { 18 }, INVTYPE_RANGEDRIGHT = { 18 }, INVTYPE_THROWN = { 18 }, INVTYPE_RELIC = { 18 },
+	INVTYPE_TABARD = { 19 },
+}
+AC.COMPARE_SLOTS = SLOTS_FOR
+
+function AC.EquipLoc(item)
+	if item == nil then return nil end
+	local gi = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+	if not gi then return nil end
+	local ok, id, _, _, loc = pcall(gi, item)
+	if ok and id and type(loc) == "string" and loc ~= "" then return loc end
 end
 
-local function hideTooltip() if GameTooltip then GameTooltip:Hide() end end
+-- { { slot = 16, link = ... }, ... } for what you are wearing in the slot(s) the item goes in.
+function AC.CompareItems(item)
+	local slots = SLOTS_FOR[AC.EquipLoc(item) or ""]
+	local out = {}
+	if not slots or not GetInventoryItemLink then return out end
+	for _, slot in ipairs(slots) do
+		local ok, link = pcall(GetInventoryItemLink, "player", slot)
+		if ok and type(link) == "string" and link ~= "" and not secret(link) then
+			out[#out + 1] = { slot = slot, link = link }
+		end
+	end
+	return out
+end
+
+function AC.ShouldCompare()
+	if IsModifiedClick then
+		local ok, v = pcall(IsModifiedClick, "COMPAREITEMS")
+		if ok and v then return true end
+	elseif IsShiftKeyDown and IsShiftKeyDown() then
+		return true
+	end
+	if GetCVarBool then
+		local ok, v = pcall(GetCVarBool, "alwaysCompareItems")
+		if ok and v then return true end
+	end
+	return false
+end
+
+local itemTip, compareTips, tipWatcher = nil, {}, nil
+
+local function makeTip(name, templates)
+	for _, t in ipairs(templates) do
+		local ok, f = pcall(CreateFrame, "GameTooltip", name, UIParent, t)
+		if ok and f then
+			if f.SetFrameStrata then f:SetFrameStrata("TOOLTIP") end
+			if f.SetClampedToScreen then f:SetClampedToScreen(true) end
+			f:Hide()
+			return f
+		end
+	end
+end
+
+local function getItemTip()
+	if itemTip == nil then
+		itemTip = makeTip("AlchemistsCookbookTooltip", { "GameTooltipTemplate" }) or false
+		if itemTip then
+			itemTip:HookScript("OnHide", function() for _, c in ipairs(compareTips) do c:Hide() end end)
+			tipWatcher = CreateFrame("Frame")
+			tipWatcher:RegisterEvent("MODIFIER_STATE_CHANGED")
+			tipWatcher:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+			tipWatcher:SetScript("OnEvent", function() if itemTip:IsShown() then AC.UpdateCompare() end end)
+		end
+	end
+	return itemTip or nil
+end
+
+local function hasHeader(c)
+	return type(c.CompareHeader) == "table" and type(c.CompareHeader.Label) == "table"
+end
+
+local function getCompareTip(i)
+	local c = compareTips[i]
+	if c == nil then
+		c = makeTip("AlchemistsCookbookCompareTooltip" .. i, { "ShoppingTooltipTemplate", "GameTooltipTemplate" })
+		if not c then return nil end
+		if not hasHeader(c) then
+			local fs = c:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+			fs:SetPoint("BOTTOMLEFT", c, "TOPLEFT", 4, 2)
+			c.acHeader = fs
+		end
+		compareTips[i] = c
+	end
+	return c
+end
+AC._compareTips = compareTips
+
+local function setCompareHeader(c)
+	local text = (type(EQUIPPED) == "string" and EQUIPPED ~= "") and EQUIPPED or "Equipped"
+	if hasHeader(c) then
+		c.CompareHeader.Label:SetText(text)
+		local w = c.CompareHeader.Label:GetWidth()
+		if type(w) == "number" then c.CompareHeader:SetWidth(w + 30) end
+		c.CompareHeader:Show()
+	elseif c.acHeader then
+		c.acHeader:SetText(text)
+		c.acHeader:Show()
+	end
+end
+
+-- Shows the compare tooltips for the item in our tooltip (or hides them).
+function AC.UpdateCompare()
+	for _, c in ipairs(compareTips) do c:Hide() end
+	local tip = itemTip
+	if not tip or not tip:IsShown() or tip.acItem == nil or not AC.ShouldCompare() then return 0 end
+	local shown = {}
+	for i, e in ipairs(AC.CompareItems(tip.acItem)) do
+		local c = getCompareTip(i)
+		if c then
+			c:SetOwner(tip, "ANCHOR_NONE")
+			c:ClearAllPoints()
+			local ok = pcall(c.SetInventoryItem, c, "player", e.slot)
+			if not ok or (c.NumLines and (c:NumLines() or 0) == 0) then
+				pcall(c.SetHyperlink, c, e.link:match("|H(.-)|h") or e.link)
+			end
+			setCompareHeader(c)
+			c.acSlot, c.acLink = e.slot, e.link
+			c:Show()
+			shown[#shown + 1] = c
+		end
+	end
+	if #shown == 0 then return 0 end
+	local total = 0
+	for _, c in ipairs(shown) do total = total + (tonumber(c:GetWidth()) or 0) end
+	local right, left = tonumber(tip:GetRight()), tonumber(tip:GetLeft())
+	local screen = tonumber(GetScreenWidth and GetScreenWidth()) or 0
+	local onLeft = right and screen > 0 and right + total > screen and left and left >= total
+	for i, c in ipairs(shown) do
+		local rel = i == 1 and tip or shown[i - 1]
+		if onLeft then c:SetPoint("TOPRIGHT", rel, "TOPLEFT", 0, 0)
+		else c:SetPoint("TOPLEFT", rel, "TOPRIGHT", 0, 0) end
+	end
+	return #shown
+end
+
+local function tooltipFor(owner, link, itemID)
+	local tip = getItemTip() or GameTooltip
+	if not tip then return end
+	if GameTooltip and tip ~= GameTooltip then GameTooltip:Hide() end
+	tip:SetOwner(owner, "ANCHOR_RIGHT")
+	tip.acItem = nil
+	if link and link:find("|H", 1, true) then
+		pcall(tip.SetHyperlink, tip, link:match("|H(.-)|h") or link)
+		tip.acItem = itemID or (link:find("|Hitem:", 1, true) and link) or nil
+	elseif itemID then
+		if tip.SetItemByID then pcall(tip.SetItemByID, tip, itemID)
+		else pcall(tip.SetHyperlink, tip, "item:" .. itemID) end
+		tip.acItem = itemID
+	else
+		return tip:Hide()
+	end
+	tip:Show()
+	if tip ~= GameTooltip then AC.UpdateCompare() end
+end
+AC._tooltipFor = tooltipFor
+
+local function hideTooltip()
+	if GameTooltip then GameTooltip:Hide() end
+	if itemTip then itemTip:Hide() end
+	for _, c in ipairs(compareTips) do c:Hide() end
+end
 
 local function label(parent, font, text, width)
 	local fs = parent:CreateFontString(nil, "ARTWORK", font or "GameFontHighlight")

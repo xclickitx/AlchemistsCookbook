@@ -1,5 +1,6 @@
 -- Mock WoW API harness for Alchemist's Cookbook (modes: modern / legacy options / classic API)
 local MODE = AC_MODE or "modern"
+NO_SHOPPING_TEMPLATE = (MODE == "legacy")  -- exercise the fallback header
 local chat = {}
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) chat[#chat+1] = m end }
 local function clearChat() for i=#chat,1,-1 do chat[i]=nil end end
@@ -9,7 +10,11 @@ local function ok(c, name) if c then passes = passes + 1 else fails = fails + 1 
 
 -- items: id -> name
 local ITEMS = { [2770]="Copper Ore", [2771]="Tin Ore", [2840]="Copper Bar", [3576]="Tin Bar", [2841]="Bronze Bar",
-  [2880]="Weak Flux", [2862]="Rough Sharpening Stone", [2835]="Rough Stone", [6214]="Heavy Copper Maul" }
+  [2880]="Weak Flux", [2862]="Rough Sharpening Stone", [2835]="Rough Stone", [6214]="Heavy Copper Maul",
+  [3491]="Heavy Bronze Mace", [3490]="Deadly Bronze Poniard", [2901]="Mining Pick", [7001]="Shiver Blade",
+  [7002]="Worn Buckler", [7003]="Copper Band", [7004]="Silver Ring", [7005]="Bronze Shield", [7006]="Bronze Greatsword" }
+local EQUIPLOC = { [6214]="INVTYPE_2HWEAPON", [3491]="INVTYPE_WEAPON", [3490]="INVTYPE_WEAPON", [2901]="INVTYPE_WEAPON",
+  [7001]="INVTYPE_WEAPON", [7002]="INVTYPE_SHIELD", [7003]="INVTYPE_FINGER", [7004]="INVTYPE_FINGER", [7005]="INVTYPE_SHIELD", [7006]="INVTYPE_2HWEAPON" }
 local uncached = { [2880] = true }
 local bags = { [2770]=23, [2840]=3, [3576]=4, [2835]=5, [2880]=0 }
 local bank = { [2840]=2, [2880]=1 }
@@ -29,7 +34,20 @@ C_Item = {
     return b
   end,
   RequestLoadItemDataByID = function() end,
+  GetItemInfoInstant = function(item)
+    local id = tonumber(item) or (type(item) == "string" and tonumber(item:match("item:(%d+)")))
+    if not id then return nil end
+    return id, "Misc", "", EQUIPLOC[id] or "INVTYPE_NON_EQUIP_IGNORE", 100 + id, 0, 0
+  end,
 }
+-- what you're wearing: Shiver Blade in the main hand; Mining Pick sits in your bags
+local EQUIPPED_INV = { [16] = link(7001) }
+bags[2901] = 1
+function GetInventoryItemLink(unit, slot) if unit == "player" then return EQUIPPED_INV[slot] end end
+local shiftDown, alwaysCompare = false, false
+function IsModifiedClick(k) return k == "COMPAREITEMS" and shiftDown end
+function GetCVarBool(k) if k == "alwaysCompareItems" then return alwaysCompare end end
+function GetScreenWidth() return 1920 end
 Enum = { TradeskillRelativeDifficulty = { Optimal = 0, Medium = 1, Easy = 2, Trivial = 3 }, CraftingReagentType = { Modifying = 0, Basic = 1, Finishing = 2, Automatic = 3 } }
 
 -- Protected / state-changing calls must never happen.
@@ -174,6 +192,18 @@ local function mkFrame(ftype, name, parent, template)
     textures[#textures+1] = t
     return t
   end
+  if ftype == "GameTooltip" then
+    if template == "ShoppingTooltipTemplate" and NO_SHOPPING_TEMPLATE then error("Couldn't find inherited node") end
+    f.SetHyperlink = function(self, l) tipLink = l; self.link = l; self.invSlot = nil end
+    f.SetItemByID = function(self, id) tipLink = "item:"..id; self.link = tipLink; self.invSlot = nil end
+    f.SetInventoryItem = function(self, unit, slot) self.invSlot = slot; self.link = EQUIPPED_INV[slot]; return self.link ~= nil end
+    f.NumLines = function(self) return rawget(self, "link") and 3 or 0 end
+    f.SetOwner = function(self, o, a) self.owner, self.anchor = o, a; self.link = nil end
+    f.GetWidth = function() return 200 end
+    f.GetRight = function(self) return rawget(self, "right") or 600 end
+    f.GetLeft = function(self) return (rawget(self, "right") or 600) - 200 end
+    if template == "ShoppingTooltipTemplate" then f.CompareHeader = mkFrame("Frame"); f.CompareHeader.Label = mkFrame("FontString") end
+  end
   frames[#frames+1] = f
   if name then _G[name] = f end
   return f
@@ -200,7 +230,7 @@ local AC = AlchemistsCookbook
 local ev = AC._ev
 local function fire(e, ...) ev.scripts.OnEvent(ev, e, ...) end
 fire("ADDON_LOADED", "AlchemistsCookbook"); fire("PLAYER_LOGIN")
-ok(AC.VERSION == "1.0.2", "version 1.0.2")
+ok(AC.VERSION == "1.0.3", "version 1.0.3")
 ok(AlchemistsCookbookDB.filters.skillup == false and AlchemistsCookbookDB.filters.have == false and AlchemistsCookbookDB.filters.haveBank == false, "filters default off")
 ok(AlchemistsCookbookDB.scale == 1 and AlchemistsCookbookDB.minimap.hide == false, "account defaults")
 ok(type(AlchemistsCookbookCharDB.professions) == "table", "per-character db")
@@ -310,6 +340,74 @@ ok(U.reagents[1]:IsShown() and U.reagents[1].have.text:find("have 23|r / need 1"
 ok(U.dCraft.text == "You can make 23 now.", "craft-now line")
 ok(U.dTools.text == "Requires: Forge", "tools line")
 U.reagents[1].scripts.OnEnter(U.reagents[1]); ok(tipLink and tipLink:find("item:2770", 1, true), "reagent tooltip")
+-- 1.0.3: our own item tooltip, comparing only with what you actually wear
+do
+  local tip = AlchemistsCookbookTooltip
+  ok(tip and tip.ftype == "GameTooltip" and tip.template == "GameTooltipTemplate" and tip:IsShown(), "item tooltips use our own tooltip, not GameTooltip")
+  ok(rawget(tip, "supportsItemComparison") == nil, "Blizzard auto-compare is not enabled on it")
+  local gtUsed = 0
+  local gtSet, gtItem = GameTooltip.SetHyperlink, GameTooltip.SetItemByID
+  rawset(GameTooltip, "SetHyperlink", function(...) gtUsed = gtUsed + 1 return gtSet(...) end)
+  rawset(GameTooltip, "SetItemByID", function(...) gtUsed = gtUsed + 1 return gtItem(...) end)
+  local watcher; for _, f in ipairs(frames) do if f.events.MODIFIER_STATE_CHANGED then watcher = f end end
+  ok(watcher and watcher.events.PLAYER_EQUIPMENT_CHANGED, "watches shift and gear changes")
+  local function fireW(e) watcher.scripts.OnEvent(watcher, e) end
+  local function C(i) return _G["AlchemistsCookbookCompareTooltip"..i] end
+  local function shown(i) return C(i) ~= nil and C(i):IsShown() end
+  local function pick() for i = 1, 2 do if C(i) and tostring(C(i).link):find("item:2901", 1, true) then return true end end return false end
+  local owner = mkFrame("Button")
+  shiftDown, alwaysCompare = false, false
+  AC._tooltipFor(owner, link(3490), 3490)
+  ok(tip:IsShown() and tipLink:find("item:3490", 1, true) and tip.owner == owner, "Deadly Bronze Poniard tooltip")
+  ok(not shown(1) and not shown(2), "no compare without shift or always-compare")
+  shiftDown = true; fireW("MODIFIER_STATE_CHANGED")
+  ok(shown(1) and C(1).invSlot == 16 and C(1).link:find("item:7001", 1, true), "shift: compares with equipped main hand (Shiver Blade)")
+  ok(not shown(2) and not pick(), "no Mining Pick, no second tooltip with an empty off hand")
+  if NO_SHOPPING_TEMPLATE then
+    ok(C(1).template == "GameTooltipTemplate" and C(1).acHeader and C(1).acHeader.text == "Equipped", "fallback Equipped header without ShoppingTooltipTemplate")
+  else
+    ok(C(1).template == "ShoppingTooltipTemplate" and C(1).CompareHeader.Label.text == "Equipped" and C(1).CompareHeader:IsShown(), "native Equipped header")
+  end
+  ok(C(1).point and C(1).point[1] == "TOPLEFT" and C(1).point[2] == tip and C(1).point[3] == "TOPRIGHT", "anchored beside the item tooltip")
+  -- smelting / Mining window open makes no difference: we only read slots 16/17
+  AC._tooltipFor(owner, link(3491), 3491)
+  ok(shown(1) and C(1).invSlot == 16 and not shown(2) and not pick(), "Heavy Bronze Mace: only Shiver Blade")
+  EQUIPPED_INV[17] = link(7002); fireW("PLAYER_EQUIPMENT_CHANGED")
+  ok(shown(1) and shown(2) and C(2).invSlot == 17 and C(2).link:find("item:7002", 1, true) and C(2).point[2] == C(1), "one-hander: main hand and off hand")
+  AC._tooltipFor(owner, link(6214), 6214)
+  ok(shown(1) and shown(2) and C(1).invSlot == 16 and C(2).invSlot == 17, "two-hander: both hands")
+  AC._tooltipFor(owner, nil, 7005)
+  ok(shown(1) and C(1).invSlot == 17 and not shown(2), "shield: off hand only")
+  EQUIPPED_INV[11] = link(7003)
+  AC._tooltipFor(owner, link(7004), 7004)
+  ok(shown(1) and C(1).invSlot == 11 and not shown(2), "ring: the one ring slot in use")
+  EQUIPPED_INV[12] = link(7004); fireW("PLAYER_EQUIPMENT_CHANGED")
+  ok(shown(1) and shown(2) and C(1).invSlot == 11 and C(2).invSlot == 12, "ring: both ring slots")
+  AC._tooltipFor(owner, link(2840), 2840)
+  ok(not shown(1) and not shown(2), "non-equippable item: no compare")
+  AC._tooltipFor(owner, "|cff71d5ff|Hspell:2657|h[Smelt Copper]|h|r", nil)
+  ok(tip:IsShown() and not shown(1), "spell link: no compare")
+  EQUIPPED_INV[16] = link(7006); AC._tooltipFor(owner, link(3491), 3491)
+  ok(C(1).link:find("item:7006", 1, true), "follows gear swaps")
+  EQUIPPED_INV[16] = link(7001)
+  shiftDown = false; fireW("MODIFIER_STATE_CHANGED")
+  ok(not shown(1) and not shown(2), "releasing shift hides the compare")
+  alwaysCompare = true; AC._tooltipFor(owner, link(3491), 3491)
+  ok(shown(1) and shown(2), "always-compare setting shows it without shift")
+  tip.right = 1850; AC.UpdateCompare()
+  ok(C(1).point[1] == "TOPRIGHT" and C(1).point[3] == "TOPLEFT" and C(2).point[2] == C(1), "flips left at the screen edge")
+  tip.right = nil
+  secretIDs[EQUIPPED_INV[17]] = true; AC.UpdateCompare()
+  ok(shown(1) and not shown(2), "secret links are skipped")
+  secretIDs[EQUIPPED_INV[17]] = nil
+  local fb = #forbidden
+  inCombat = true; AC._tooltipFor(owner, link(3491), 3491); ok(shown(1) and #forbidden == fb, "works in combat, no protected calls"); inCombat = false
+  U.reagents[1].scripts.OnLeave(U.reagents[1])
+  ok(not tip:IsShown() and not shown(1) and not shown(2), "leaving hides tooltip and compares")
+  ok(gtUsed == 0 and rawget(_G, "ShoppingTooltip1") == nil, "never touched GameTooltip or ShoppingTooltip1/2")
+  rawset(GameTooltip, "SetHyperlink", gtSet); rawset(GameTooltip, "SetItemByID", gtItem)
+  alwaysCompare = false; EQUIPPED_INV[17], EQUIPPED_INV[11], EQUIPPED_INV[12] = nil, nil, nil
+end
 local bronzeRow; for _, r in ipairs(U.rows) do local d = rawget(r, "data") if d and d.recipe == bronze then bronzeRow = r end end
 bronzeRow.scripts.OnClick(bronzeRow)
 ok(U.dCraft.text == "You can make 3 now (4 counting your bank).", "bank-aware craft line")
@@ -598,7 +696,9 @@ AC.InitDB(saved, savedC)
 -- never a protected or state-changing call
 ok(#forbidden == 0, "no protected calls: "..table.concat(forbidden, ","))
 for t in pairs(TEMPLATES_USED) do
-  local allowed = { BackdropTemplate=1, UIPanelCloseButton=1, UIPanelScrollFrameTemplate=1, InputBoxTemplate=1, UIPanelButtonTemplate=1, UICheckButtonTemplate=1 }
+  local allowed = { BackdropTemplate=1, UIPanelCloseButton=1, UIPanelScrollFrameTemplate=1, InputBoxTemplate=1, UIPanelButtonTemplate=1, UICheckButtonTemplate=1,
+    -- both defined in the Forever 1.60.1 client's Blizzard_GameTooltip/Mainline/GameTooltip.xml (read via CASC)
+    GameTooltipTemplate=1, ShoppingTooltipTemplate=1 }
   ok(allowed[t], "template used by other Forever add-ons: "..t)
   ok(not t:find("Secure"), "no secure templates")
 end

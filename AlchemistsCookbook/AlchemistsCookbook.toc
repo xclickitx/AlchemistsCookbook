@@ -2,7 +2,7 @@
 ## Title: Alchemist's Cookbook
 ## Notes: Browse every profession's recipes and reagents without opening the profession window, so your repeat craft keeps going.
 ## Author: ClickIT
-## Version: 1.0.2
+## Version: 1.0.3
 ## SavedVariables: AlchemistsCookbookDB
 ## SavedVariablesPerCharacter: AlchemistsCookbookCharDB
 ## IconTexture: Interface\Icons\Trade_Alchemy

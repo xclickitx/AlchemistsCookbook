@@ -27,19 +27,17 @@ The Cookbook only reads. It never crafts, casts, or opens or closes a profession
 
 ## Screenshots
 
-**Browsing while you craft.** A Smelt Tin x4 batch keeps running in the Mining window while the Cookbook shows First Aid, with an item tooltip on hover.
+**Keep crafting while you browse.** Coarse Sharpening Stone x3 is running and the Cookbook is open on Blacksmithing. The live line counts each one as it finishes.
+
+![Crafting Coarse Sharpening Stone, 2 of 3 done, 1 left](screenshots/12-counter-2-of-3.jpg)
+
+![Crafting Coarse Sharpening Stone, 0 of 3 done, 3 left](screenshots/10-counter-0-of-3.jpg)
+
+![Crafting Coarse Sharpening Stone, 1 of 3 done, 2 left](screenshots/11-counter-1-of-3.jpg)
+
+**Check another profession mid-craft.** Smelt Tin keeps going in the Mining window while the Cookbook shows First Aid, with an item tooltip on hover.
 
 ![Browsing First Aid while smelting](screenshots/08-crafting-browse-first-aid.jpg)
-
-**Switch professions without stopping the craft.** Cooking tab open mid-batch; the cast bar is still going.
-
-![Browsing Cooking while smelting](screenshots/09-crafting-browse-cooking.jpg)
-
-![Browsing Blacksmithing while smelting](screenshots/06-crafting-browse-blacksmithing.jpg)
-
-![Create All queue still running](screenshots/07-crafting-queue.jpg)
-
-*Screenshots 06 to 09 were taken on 1.0.0, so the bottom line still shows the old wording ("this one + 3 more queued (done so far: 0)"). From 1.0.1 it reads like "Crafting [Tin Bar]: 2 of 5 done, 3 left" and counts up as you go.*
 
 **All your professions in one window,** with craftable counts in `[ ]` and item tooltips.
 

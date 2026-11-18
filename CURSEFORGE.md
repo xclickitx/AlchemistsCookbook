@@ -77,17 +77,12 @@ The zip's top level must be the `AlchemistsCookbook/` folder (`AlchemistsCookboo
 
 All are 1920x1080 JPGs under 1 MB in `screenshots/`.
 
-1. `08-crafting-browse-first-aid.jpg`: browsing First Aid with a tooltip while Smelt Tin x4 keeps going (main image)
-2. `09-crafting-browse-cooking.jpg`: Cooking tab mid-craft, cast bar still running
-3. `05-mining-all-tabs.jpg`: all five professions as tabs, craftable count, Gold Bar tooltip
-4. `03-blacksmithing-tooltip.jpg`: Blacksmithing list with weapon tooltip and craftable counts
-5. `02-saved-fishing.jpg`: the "Saved Fishing" message on first open
-
-Captions to use: "Browse First Aid while smelting", "Switch to Cooking without stopping the craft", "Every profession in one window", "Tooltips and craftable counts", "Open a profession once and it's saved".
-
-Note: 08 and 09 were taken on 1.0.0, so their bottom line shows the old wording ("this one + 3 more queued (done so far: 0)"). Consider retaking one crafting shot on 1.0.1, where the line reads "2 of 5 done, 3 left", and using it as the main image instead.
+1. `12-counter-2-of-3.jpg` (main image). Caption: **"Keep crafting while you browse: 2 of 3 done, 1 left"**
+2. `08-crafting-browse-first-aid.jpg`. Caption: **"Check First Aid while your smelting keeps going"**
+3. `05-mining-all-tabs.jpg`. Caption: **"Every profession you know in one window"**
+4. `03-blacksmithing-tooltip.jpg`. Caption: **"Item tooltips and how many you can make right now"**
+5. `11-counter-1-of-3.jpg`. Caption: **"A live count of what you're crafting and how many are left"**
 
 ## Still needed from you before anything goes live
 
 - Create the GitHub repo `xclickitx/AlchemistsCookbook`, then push this folder and attach `AlchemistsCookbook-1.0.1.zip` to a `v1.0.1` release
-- Optional: a fresh 1.0.1 crafting screenshot showing the new "X of N done, Y left" line

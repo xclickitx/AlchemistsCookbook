@@ -200,7 +200,8 @@ local AC = AlchemistsCookbook
 local ev = AC._ev
 local function fire(e, ...) ev.scripts.OnEvent(ev, e, ...) end
 fire("ADDON_LOADED", "AlchemistsCookbook"); fire("PLAYER_LOGIN")
-ok(AC.VERSION == "1.0.1", "version 1.0.1")
+ok(AC.VERSION == "1.0.2", "version 1.0.2")
+ok(AlchemistsCookbookDB.filters.skillup == false and AlchemistsCookbookDB.filters.have == false and AlchemistsCookbookDB.filters.haveBank == false, "filters default off")
 ok(AlchemistsCookbookDB.scale == 1 and AlchemistsCookbookDB.minimap.hide == false, "account defaults")
 ok(type(AlchemistsCookbookCharDB.professions) == "table", "per-character db")
 ok(ev.events.TRADE_SKILL_SHOW and ev.events.CRAFT_SHOW and ev.events.UNIT_SPELLCAST_START == "player", "events registered (cast events unit-filtered)")
@@ -224,6 +225,13 @@ if MODE == "classic" then
   local en = AlchemistsCookbookCharDB.professions.Enchanting
   ok(en and #en.recipes == 1 and en.recipes[1].reagents[1].count == 2 and en.rank == 30, "craft API scan saved Enchanting")
   ok(select(1, AC.Craftable(en.recipes[1])) == 11, "craftable from craft reagents")
+  local mBefore = AlchemistsCookbookCharDB.professions.Mining
+  open = nil; local e, why = AC.ScanClassicTrade(); ok(e == nil and why == "notready", "classic UNKNOWN line rejected")
+  local realLine = GetTradeSkillLine
+  GetTradeSkillLine = function() return "Mining", 0, 0 end
+  e, why = AC.ScanClassicTrade(); ok(e == nil and why == "notready", "classic 0/0 rejected")
+  GetTradeSkillLine = realLine
+  ok(AlchemistsCookbookCharDB.professions.Mining == mBefore and AlchemistsCookbookCharDB.professions.UNKNOWN == nil, "classic guard keeps saved data")
   ok(#forbidden == 0, "no protected calls (classic)")
   print(("passes=%d fails=%d"):format(passes, fails))
   return fails
@@ -426,6 +434,156 @@ ok(ev.events.CHAT_MSG_LOOT and ev.events.CHAT_MSG_TRADESKILLS, "chat events regi
 ok(AC.ParseCreated("You create: "..link(2840)..".") == 2840 and AC.ParseCreated("Bob creates: "..link(2840)) == nil, "ParseCreated")
 LOOT_ITEM_CREATED_SELF = "Vous créez : %s."; ok(AC.ParseCreated("Vous créez : "..link(2840)..".") == 2840, "localized create line"); LOOT_ITEM_CREATED_SELF = nil
 runTimers(true)
+
+-- filters (1.0.2)
+do
+  F:Show()
+  local saveBags = {} for k, v in pairs(bags) do saveBags[k] = v end
+  local saveBank = {} for k, v in pairs(bank) do saveBank[k] = v end
+  bags[2770], bags[2840], bags[3576], bags[2835], bags[2880] = 23, 3, 0, 5, 0
+  bank[3576] = 1
+  local function names(prof, q)
+    local t = {}
+    for _, r in ipairs(AC.BuildRows(prof, q or "")) do t[#t+1] = r.header and ("#"..r.header) or r.recipe.name end
+    return table.concat(t, ",")
+  end
+  ok(names("Blacksmithing") == "#Materials,Rough Sharpening Stone,#Weapons,Heavy Copper Maul", "no filters: "..names("Blacksmithing"))
+  -- skill-ups only: grey (trivial) sharpening stone hidden, empty Materials header hidden
+  SlashCmdList.ALCHEMISTSCOOKBOOK("skillup")
+  ok(AlchemistsCookbookDB.filters.skillup == true, "/acook skillup toggles on")
+  ok(names("Blacksmithing") == "#Weapons,Heavy Copper Maul", "skill-ups only: "..names("Blacksmithing"))
+  ok(names("Mining") == "#Smelting,Smelt Copper,Smelt Bronze", "orange + yellow kept: "..names("Mining"))
+  ok(AC.CanSkillUp({ difficulty = "easy" }) and not AC.CanSkillUp({ difficulty = "trivial" }) and not AC.CanSkillUp({}), "CanSkillUp")
+  SlashCmdList.ALCHEMISTSCOOKBOOK("skillup off"); ok(AlchemistsCookbookDB.filters.skillup == false, "/acook skillup off")
+  -- have materials
+  SlashCmdList.ALCHEMISTSCOOKBOOK("have on")
+  ok(names("Blacksmithing") == "#Materials,Rough Sharpening Stone", "have materials (bags): "..names("Blacksmithing"))
+  ok(names("Mining") == "#Smelting,Smelt Copper", "bronze hidden without tin in bags: "..names("Mining"))
+  SlashCmdList.ALCHEMISTSCOOKBOOK("bank on")
+  ok(AlchemistsCookbookDB.filters.haveBank and names("Mining") == "#Smelting,Smelt Copper,Smelt Bronze", "bank counts tin: "..names("Mining"))
+  SlashCmdList.ALCHEMISTSCOOKBOOK("bank off")
+  ok(AC.HaveMaterials({ reagents = {} }), "no-reagent recipe counts as makeable")
+  -- live: bags change -> filtered list changes on refresh
+  bags[3576] = 2; F.scripts.OnEvent(F, "BAG_UPDATE_DELAYED"); runTimers()
+  U.tabs[2].scripts.OnClick(U.tabs[2])
+  local has = false for _, r in ipairs(AC._rows) do if r.recipe and r.recipe.id == 2659 then has = true end end
+  ok(has, "have filter follows bag changes")
+  bags[3576] = 0
+  -- both + search combine
+  SlashCmdList.ALCHEMISTSCOOKBOOK("skillup on")
+  ok(names("Blacksmithing") == "", "skill-up + have: nothing in Blacksmithing")
+  ok(names("Mining", "copper") == "#Smelting,Smelt Copper" and names("Mining", "bronze") == "", "filters combine with search")
+  -- empty message in the window
+  U.tabs[1].scripts.OnClick(U.tabs[1])
+  ok(#AC._rows == 0 and U.empty.text:find("Nothing in Blacksmithing matches Skill-ups only + Have materials", 1, true) and U.empty.text:find("Untick a filter", 1, true), "friendly empty message: "..tostring(U.empty.text))
+  U.search:SetText("zzz"); U.search.scripts.OnTextChanged(U.search)
+  ok(U.empty.text:find("your search and", 1, true) and U.empty.text:find("clear the search", 1, true), "empty message mentions search")
+  U.search:SetText(""); U.search.scripts.OnTextChanged(U.search)
+  -- window checkboxes reflect and drive the filters
+  ok(U.fSkill:GetChecked() and U.fHave:GetChecked() and not U.fBank:GetChecked() and U.fBank:IsShown(), "window checkboxes reflect settings; + bank shown with have")
+  U.fSkill:SetChecked(false); U.fSkill.scripts.OnClick(U.fSkill); ok(AlchemistsCookbookDB.filters.skillup == false, "window skill-up box")
+  U.fHave:SetChecked(false); U.fHave.scripts.OnClick(U.fHave); ok(AlchemistsCookbookDB.filters.have == false and not U.fBank:IsShown() and U.fBank:IsEnabled(), "window have box; + bank hidden (not greyed) when have is off")
+  ok(#AC._rows == 4 and U.empty.text == "", "filters off: full list back")
+  ok(U.fSkill.template == "UICheckButtonTemplate", "filter boxes use plain checkbuttons")
+ok(U.fSkill.point[1] == "TOPLEFT" and U.fSkill.point[3] == "TOPRIGHT" and U.fSkill.point[4] < U.fHave.point[4] and U.fHave.point[4] < U.fBank.point[4] and U.fBank.point[4] < 0, "filters sit on the right-hand side, in order")
+  -- collapsed header still respected with a filter on, and empty header hidden
+  AC.ToggleHeader("Blacksmithing", "Materials"); AC.SetFilter("have", true)
+  ok(names("Blacksmithing") == "#Materials", "collapsed header kept when it has matches")
+  AC.SetFilter("have", false); AC.ToggleHeader("Blacksmithing", "Materials")
+  -- settings page boxes
+  SlashCmdList.ALCHEMISTSCOOKBOOK("options")
+  local PU = AC._pui
+  ok(PU.fSkill and PU.fHave and PU.fBank and not PU.fSkill:GetChecked(), "settings page has filter boxes")
+  PU.fSkill:SetChecked(true); PU.fSkill.scripts.OnClick(PU.fSkill); ok(AlchemistsCookbookDB.filters.skillup and U.fSkill:GetChecked(), "settings box drives filter + window box")
+  ok(not PU.fBank:IsShown() and PU.sizeLabel.point[2] == PU.fHave, "settings bank box hidden while have is off; rows move up")
+  PU.fHave:SetChecked(true); PU.fHave.scripts.OnClick(PU.fHave); ok(PU.fBank:IsShown() and PU.sizeLabel.point[2] == PU.fBank and U.fBank:IsShown(), "settings + window bank boxes appear with have")
+  PU.fBank:SetChecked(true); PU.fBank.scripts.OnClick(PU.fBank); ok(AlchemistsCookbookDB.filters.haveBank, "settings bank box")
+  SlashCmdList.ALCHEMISTSCOOKBOOK("have off"); ok(not PU.fBank:IsShown() and not U.fBank:IsShown() and AlchemistsCookbookDB.filters.haveBank == true, "unticking have hides + bank but keeps its value")
+  SlashCmdList.ALCHEMISTSCOOKBOOK("have on"); ok(PU.fBank:IsShown() and PU.fBank:GetChecked() and U.fBank:IsShown() and U.fBank:GetChecked(), "re-ticking have shows + bank still ticked")
+  SlashCmdList.ALCHEMISTSCOOKBOOK("skillup off"); ok(not PU.fSkill:GetChecked(), "slash change shows on settings page")
+  -- reset to defaults clears filters
+  AC.panel.OnDefault(); ok(not AlchemistsCookbookDB.filters.skillup and not AlchemistsCookbookDB.filters.have and not AlchemistsCookbookDB.filters.haveBank, "defaults clear filters")
+  -- old saved variables get filter defaults; saved values survive reload
+  local a = AC.InitDB({ minimap = { hide = false, angle = 10 }, scale = 1 }, AlchemistsCookbookCharDB)
+  ok(type(a.filters) == "table" and a.filters.have == false, "1.0.1 saved vars upgraded")
+  a.filters.skillup = true
+  local a2 = AC.InitDB(a, AlchemistsCookbookCharDB); ok(a2.filters.skillup == true, "filter setting persists")
+  a2.filters.skillup = false
+  clearChat(); SlashCmdList.ALCHEMISTSCOOKBOOK("help"); ok(chatHas("/acook skillup") and chatHas("/acook have"), "help lists filters")
+  for k, v in pairs(saveBags) do bags[k] = v end
+  for k, v in pairs(saveBank) do bank[k] = v end
+  bank[3576] = nil
+end
+
+-- "Unknown 0/0" guard (1.0.2)
+do
+  PROFS.Glitch = { base = { professionName = "Unknown", professionID = 0, skillLevel = 0, maxSkillLevel = 0 }, child = {}, recipes = PROFS.Blacksmithing.recipes }
+  local before = {} for k in pairs(AlchemistsCookbookCharDB.professions) do before[#before+1] = k end table.sort(before)
+  local function keys() local t = {} for k in pairs(AlchemistsCookbookCharDB.professions) do t[#t+1] = k end table.sort(t) return table.concat(t, ",") end
+  local savedBS = AlchemistsCookbookCharDB.professions.Blacksmithing
+  AlchemistsCookbookCharDB.professions.Blacksmithing = nil
+  ok(AC.IsBadProfessionName("Unknown") and AC.IsBadProfessionName("UNKNOWN") and AC.IsBadProfessionName("") and AC.IsBadProfessionName(nil) and AC.IsBadProfessionName("  unknown ") and not AC.IsBadProfessionName("Blacksmithing"), "bad names")
+  UNKNOWN = "Inconnu"; UNKNOWNOBJECT = "Inconnue"
+  ok(AC.IsBadProfessionName("Inconnu") and AC.IsBadProfessionName("Inconnue"), "localized UNKNOWN / UNKNOWNOBJECT")
+  -- client says Unknown 0/0 and has no other way to tell: nothing saved, retried
+  open = "Glitch"; clearChat()
+  local e, why = AC.ScanModern(); ok(e == nil and why == "notready", "Unknown 0/0 scan -> notready ("..tostring(why)..")")
+  fire("TRADE_SKILL_SHOW"); local queued = #timers; runTimers()
+  ok(AlchemistsCookbookCharDB.professions.Unknown == nil and not keys():find("Unknown", 1, true), "never saved as Unknown")
+  -- localized placeholder name
+  PROFS.Glitch.base.professionName = "Inconnu"; PROFS.Glitch.base.maxSkillLevel = 150
+  e, why = AC.ScanModern(); ok(e == nil and why == "notready", "localized Unknown rejected")
+  -- good name but skill 0/0 -> not saved
+  PROFS.Glitch.base.professionName = "Blacksmithing"; PROFS.Glitch.base.maxSkillLevel = 0
+  e, why = AC.ScanModern(); ok(e == nil and why == "notready", "max rank 0 rejected")
+  -- data arrives during the retries: first two scans Unknown, then real
+  local calls = 0
+  local realBase = C_TradeSkillUI.GetBaseProfessionInfo
+  C_TradeSkillUI.GetBaseProfessionInfo = function()
+    calls = calls + 1
+    if calls <= 2 then return { professionName = "Unknown", skillLevel = 0, maxSkillLevel = 0 } end
+    return { professionName = "Blacksmithing", professionID = 164, skillLevel = 81, maxSkillLevel = 150 }
+  end
+  fire("TRADE_SKILL_SHOW"); runTimers()
+  local bs = AlchemistsCookbookCharDB.professions.Blacksmithing
+  ok(bs and bs.rank == 81 and calls >= 3 and AlchemistsCookbookCharDB.professions.Unknown == nil, "retry saves under the real name once ready")
+  C_TradeSkillUI.GetBaseProfessionInfo = realBase
+  -- derive from the recipes' profession when the window says Unknown
+  AlchemistsCookbookCharDB.professions.Blacksmithing = nil
+  PROFS.Glitch.base = { professionName = "Unknown", skillLevel = 0, maxSkillLevel = 0 }
+  C_TradeSkillUI.GetProfessionInfoByRecipeID = function(id)
+    return { professionName = "Classic Blacksmithing", parentProfessionName = "Blacksmithing", skillLevel = 82, maxSkillLevel = 150 }
+  end
+  e = AC.ScanModern(); ok(e and e.name == "Blacksmithing" and e.rank == 82 and e.maxRank == 150, "name + rank derived from recipe's profession")
+  C_TradeSkillUI.GetProfessionInfoByRecipeID = function() return { professionName = "Unknown", skillLevel = 0, maxSkillLevel = 0 } end
+  e, why = AC.ScanModern(); ok(e == nil and why == "notready", "derived Unknown still rejected")
+  C_TradeSkillUI.GetProfessionInfoByRecipeID = nil
+  -- skill line lookup fills in a missing max rank
+  PROFS.Glitch.base = { professionName = "Blacksmithing", professionID = 164, skillLevel = 0, maxSkillLevel = 0 }
+  C_TradeSkillUI.GetProfessionInfoBySkillLineID = function(id) if id == 164 then return { professionName = "Blacksmithing", skillLevel = 83, maxSkillLevel = 150 } end end
+  e = AC.ScanModern(); ok(e and e.name == "Blacksmithing" and e.rank == 83, "rank from skill line lookup")
+  C_TradeSkillUI.GetProfessionInfoBySkillLineID = nil
+  -- Store refuses bad entries outright
+  ok(not AC.Store({ name = "Unknown", rank = 0, maxRank = 0, recipes = { { name = "x", reagents = {} } } }), "Store rejects Unknown")
+  ok(not AC.Store({ name = "Mining", rank = 0, maxRank = 0, recipes = { { name = "x", reagents = {} } } }), "Store rejects 0/0")
+  UNKNOWN, UNKNOWNOBJECT = nil, nil
+  open = nil
+  AlchemistsCookbookCharDB.professions.Blacksmithing = savedBS
+  ok(keys() == table.concat(before, ","), "saved professions unchanged by the guard tests: "..keys())
+  -- purge on load
+  local char = { professions = {
+      Unknown = { name = "Unknown", rank = 0, maxRank = 0, recipes = { { name = "Heavy Copper Maul" } } },
+      Tailoring = { name = "Tailoring", rank = 0, maxRank = 0, recipes = {} },
+      Blacksmithing = { name = "Blacksmithing", rank = 80, maxRank = 150, recipes = {} } },
+    collapsed = { Unknown = { Weapons = true } } }
+  local acct = AlchemistsCookbookDB
+  AC.InitDB(acct, char)
+  ok(char.professions.Unknown == nil and char.professions.Tailoring == nil and char.professions.Blacksmithing and char.collapsed.Unknown == nil and AC.purgedOnLoad == 2, "purge Unknown and 0/0 entries on load")
+  clearChat(); fire("PLAYER_LOGIN"); ok(chatHas("Removed 2 saved lists") and AC.purgedOnLoad == 0, "purge notice once at login")
+  AC.InitDB(acct, AlchemistsCookbookCharDB)
+  ok(AC.purgedOnLoad == 0 and AlchemistsCookbookCharDB.professions.Blacksmithing, "real data untouched by purge")
+  PROFS.Glitch = nil
+end
 
 -- forget
 clearChat(); SlashCmdList.ALCHEMISTSCOOKBOOK("forget mining"); ok(AlchemistsCookbookCharDB.professions.Mining == nil and chatHas("Forgot Mining"), "forget")

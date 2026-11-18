@@ -13,7 +13,7 @@ Browse every profession's recipes and reagents without opening its window, so yo
 
 ## Description (plain markdown for the Description field)
 
-This is the approved text from `DESCRIPTION.md`, with one fact updated for 1.0.1 (the live crafting line example). Add the GitHub source link at the end.
+This is the approved text from `DESCRIPTION.md`, with facts updated for 1.0.1 (the live crafting line example) and 1.0.2 (the filters bullet). Add the GitHub source link at the end.
 
 ```markdown
 # Alchemist's Cookbook
@@ -27,6 +27,7 @@ Alchemist's Cookbook fixes that. Every time you open a profession, it quietly sa
 - One tab for each profession you've opened, all in one movable window
 - Search by recipe name or reagent (type "tin" to find everything that uses it)
 - How many of each recipe you can make right now, shown next to its name
+- Filters for "Skill-ups only" (hide grey recipes) and "Have materials" (only what you can make right now, optionally counting your bank)
 - Reagent counts as "have / need", colored green, yellow (counting your bank) or red
 - Item tooltips on hover, plus a live line showing what you're crafting and how many are left (for example "Crafting [Tin Bar]: 2 of 5 done, 3 left")
 - Minimap button, keybind, `/acook` or `/cookbook`, and a settings page under Options > AddOns
@@ -59,12 +60,12 @@ Suggested tags, if the form offers them: `professions`, `tradeskill`, `crafting`
 
 WoW Forever is a selectable flavor on CurseForge with game version **1.60.1** (confirmed for Grey Dump on 13 November 2026: CurseForge's own launch post, [WoW Forever Launch: New Addons & Hidden Gems on CurseForge](https://blog.curseforge.com/step-into-eternity-celebrating-the-launch-of-wow-forever-on-curseforge/), and existing Forever add-ons listing Flavor: Forever, Game Versions: 1.60.1).
 
-When you upload `AlchemistsCookbook-1.0.1.zip`:
+When you upload `AlchemistsCookbook-1.0.2.zip`:
 
 - Game / flavor: **World of Warcraft**, flavor **Forever** (sometimes shown as "WoW Forever")
 - Supported version: **1.60.1**
 - Release type: **Release**
-- Changelog: paste the 1.0.1 section from `CHANGELOG.md` (it's the first public upload, so you can also paste the 1.0.0 section under it)
+- Changelog: paste the 1.0.2 section from `CHANGELOG.md` (it's the first public upload, so you can also paste the 1.0.0 section under it)
 
 Tag the file with the Forever 1.60.1 version only. Do not also tag Retail or Classic unless those clients are tested later.
 
@@ -72,7 +73,7 @@ Tag the file with the Forever 1.60.1 version only. Do not also tag Retail or Cla
 
 Use the clean player zip, not a git checkout:
 
-`AlchemistsCookbook-1.0.1.zip` (in this folder; ignored by git, so attach it to the GitHub release by hand)
+`AlchemistsCookbook-1.0.2.zip` (in this folder; ignored by git, so attach it to the GitHub release by hand)
 
 The zip's top level must be the `AlchemistsCookbook/` folder (`AlchemistsCookbook/AlchemistsCookbook.toc`, `AlchemistsCookbook/AlchemistsCookbook.lua`, `AlchemistsCookbook/Bindings.xml`, `AlchemistsCookbook/LICENSE.txt`). No `test/`, no nested `AlchemistsCookbook/AlchemistsCookbook/` folder.
 
@@ -88,4 +89,4 @@ All are 1920x1080 JPGs under 1 MB in `screenshots/`.
 
 ## Still needed from you before anything goes live
 
-- Create the GitHub repo `xclickitx/AlchemistsCookbook`, then push this folder and attach `AlchemistsCookbook-1.0.1.zip` to a `v1.0.1` release
+- After the user tests 1.0.2: push `main` to https://github.com/xclickitx/AlchemistsCookbook and attach `AlchemistsCookbook-1.0.2.zip` to a `v1.0.2` release

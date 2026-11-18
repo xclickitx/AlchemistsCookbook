@@ -9,6 +9,7 @@ Alchemist's Cookbook fixes that. Every time you open a profession, it quietly sa
 - One tab for each profession you've opened, all in one movable window
 - Search by recipe name or reagent (type "tin" to find everything that uses it)
 - How many of each recipe you can make right now, shown next to its name
+- Filters for "Skill-ups only" (hide grey recipes) and "Have materials" (only what you can make right now, optionally counting your bank)
 - Reagent counts as "have / need", colored green, yellow (counting your bank) or red
 - Item tooltips on hover, plus a live line showing what you're crafting and how many are left (for example "Crafting [Tin Bar]: 2 of 5 done, 3 left")
 - Minimap button, keybind, `/acook` or `/cookbook`, and a settings page under Options > AddOns

@@ -1,4 +1,4 @@
--- Alchemist's Cookbook 1.0.1 by ClickIT, for WoW Forever (Interface 16001).
+-- Alchemist's Cookbook 1.0.2 by ClickIT, for WoW Forever (Interface 16001).
 --
 -- Opening a second profession window closes the first one, and that cancels a
 -- repeat craft (smelting x20, potions xN). Alchemist's Cookbook saves each
@@ -24,7 +24,7 @@ ADDON = ADDON or "AlchemistsCookbook"
 
 local AC = {}
 _G.AlchemistsCookbook = AC
-AC.VERSION = "1.0.1"
+AC.VERSION = "1.0.2"
 AC.NAME = "Alchemist's Cookbook"
 
 local floor, format, tonumber, tostring, type, select = math.floor, string.format, tonumber, tostring, type, select
@@ -36,6 +36,12 @@ local DEFAULTS = {
 	minimap = { hide = false, angle = 200 },
 	scale = 1,
 	pos = nil, -- { point, relPoint, x, y }
+	-- Recipe filters (1.0.2), saved per account. They combine with search and each other.
+	filters = {
+		skillup = false,  -- only recipes that can still give a skill-up (orange / yellow / green)
+		have = false,     -- only recipes you can make right now
+		haveBank = false, -- "have materials" also counts the bank
+	},
 }
 local SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.6, 1.5, 0.05
 
@@ -145,7 +151,18 @@ function AC.InitDB(saved, savedChar)
 	savedChar = type(savedChar) == "table" and savedChar or {}
 	if type(savedChar.professions) ~= "table" then savedChar.professions = {} end
 	if type(savedChar.collapsed) ~= "table" then savedChar.collapsed = {} end
-	savedChar.dataVersion = 1
+	-- 1.0.2: drop anything saved under a placeholder name or with skill 0/0
+	-- (an early scan could save Blacksmithing as "Unknown 0/0").
+	local purged = 0
+	for pname, p in pairs(savedChar.professions) do
+		if AC.IsBadProfessionName(pname) or type(p) ~= "table" or type(p.recipes) ~= "table" or (tonumber(p.maxRank) or 0) <= 0 then
+			savedChar.professions[pname] = nil
+			savedChar.collapsed[pname] = nil
+			purged = purged + 1
+		end
+	end
+	AC.purgedOnLoad = purged
+	savedChar.dataVersion = 2
 	db, cdb = saved, savedChar
 	AC.db, AC.cdb = db, cdb
 	return saved, savedChar
@@ -184,6 +201,30 @@ AC.DiffFromNum = diffFromNum
 
 local BASIC_REAGENT = (Enum and Enum.CraftingReagentType and Enum.CraftingReagentType.Basic) or 1
 
+-- A name we must never save a profession under: missing, or one of the
+-- placeholder strings the client returns while profession data isn't ready.
+function AC.IsBadProfessionName(name)
+	if type(name) ~= "string" or secret(name) then return true end
+	local n = name:gsub("^%s+", ""):gsub("%s+$", "")
+	if n == "" or n:upper() == "UNKNOWN" then return true end
+	for _, g in ipairs({ "UNKNOWN", "UNKNOWNOBJECT", "UNKNOWN_PROFESSION" }) do
+		local v = rawget(_G, g)
+		if type(v) == "string" and v ~= "" and n == v then return true end
+	end
+	return false
+end
+local badName = AC.IsBadProfessionName
+
+-- Name and rank from a ProfessionInfo table (parent name preferred, so
+-- "Classic Blacksmithing" is saved as "Blacksmithing").
+local function fromProfessionInfo(info)
+	if type(info) ~= "table" then return nil end
+	local name = str(info.parentProfessionName)
+	if badName(name) then name = str(info.professionName) end
+	if badName(name) then name = nil end
+	return name, num(info.skillLevel), num(info.maxSkillLevel)
+end
+
 -- Profession name / rank for the open window.
 local function modernProfession(api)
 	local base = try(api.GetBaseProfessionInfo)
@@ -214,7 +255,7 @@ function AC.ScanModern()
 	if blockedSource(api) then return nil, "linked" end
 	if api.IsDataSourceChanging and try(api.IsDataSourceChanging) then return nil, "busy" end
 	local name, rank, maxRank, profID, childID = modernProfession(api)
-	if not name then return nil, "noprofession" end
+	if badName(name) then name = nil end
 
 	local ids = try(api.GetAllRecipeIDs)
 	if type(ids) ~= "table" or #ids == 0 then ids = try(api.GetFilteredRecipeIDs) end
@@ -222,6 +263,30 @@ function AC.ScanModern()
 		ids = try(api.GetProfessionSpells, profID, childID)
 	end
 	if type(ids) ~= "table" or #ids == 0 then return nil, "empty" end
+
+	-- The client sometimes answers "Unknown" with skill 0/0 while the
+	-- profession is still loading. Try the skill line, then the recipes'
+	-- own profession, and if it's still unknown, wait and scan again.
+	if not name or (maxRank or 0) <= 0 then
+		local tries = {}
+		if api.GetProfessionInfoBySkillLineID then
+			if childID then tries[#tries + 1] = function() return try(api.GetProfessionInfoBySkillLineID, childID) end end
+			if profID then tries[#tries + 1] = function() return try(api.GetProfessionInfoBySkillLineID, profID) end end
+		end
+		if api.GetProfessionInfoByRecipeID then
+			for i = 1, math.min(#ids, 5) do
+				local rid = ids[i]
+				tries[#tries + 1] = function() return try(api.GetProfessionInfoByRecipeID, rid) end
+			end
+		end
+		for _, get in ipairs(tries) do
+			local n, r, m = fromProfessionInfo(get())
+			if n and not name then name = n end
+			if n and n == name and (m or 0) > 0 and (maxRank or 0) <= 0 then rank, maxRank = r or 0, m end
+			if name and (maxRank or 0) > 0 then break end
+		end
+	end
+	if not name or (maxRank or 0) <= 0 then return nil, "notready" end
 
 	local catName = {}
 	local function category(id)
@@ -295,7 +360,8 @@ function AC.ScanClassicTrade()
 	if not (GetNumTradeSkills and GetTradeSkillInfo) then return nil, "noapi" end
 	local name, rank, maxRank = tryAll(GetTradeSkillLine)
 	name = str(name)
-	if not name or name == "UNKNOWN" then return nil, "noprofession" end
+	if badName(name) then return nil, "notready" end
+	if (num(maxRank) or 0) <= 0 then return nil, "notready" end
 	local n = num(try(GetNumTradeSkills)) or 0
 	local recipes, header, collapsed = {}, "Recipes", false
 	for i = 1, n do
@@ -335,7 +401,7 @@ function AC.ScanClassicCraft()
 	if not (GetNumCrafts and GetCraftInfo) then return nil, "noapi" end
 	local name, rank, maxRank = tryAll(GetCraftDisplaySkillLine)
 	name = str(name) or str(try(GetCraftName))
-	if not name then return nil, "noprofession" end
+	if badName(name) then return nil, "notready" end
 	local recipes, header = {}, "Recipes"
 	for i = 1, num(try(GetNumCrafts)) or 0 do
 		local rname, _, kind = tryAll(GetCraftInfo, i)
@@ -367,7 +433,8 @@ end
 
 -- Store a scan. An empty or failed scan never replaces good saved data.
 function AC.Store(entry)
-	if not (cdb and type(entry) == "table" and entry.name and type(entry.recipes) == "table" and #entry.recipes > 0) then return false end
+	if not (cdb and type(entry) == "table" and type(entry.recipes) == "table" and #entry.recipes > 0) then return false end
+	if badName(entry.name) or (num(entry.maxRank) or 0) <= 0 then return false end -- never save as "Unknown" / 0-0
 	entry.api = nil
 	entry.scannedAt = (time and time()) or 0
 	local old = cdb.professions[entry.name]
@@ -402,7 +469,7 @@ function AC.RequestScan(kind, force)
 	local function run()
 		local entry, why = AC.ScanAndStore(kind)
 		tries = tries + 1
-		if not entry and (why == "busy" or why == "empty") and tries < RETRIES then
+		if not entry and (why == "busy" or why == "empty" or why == "notready") and tries < RETRIES then
 			after(1, run)
 			return
 		end
@@ -445,8 +512,62 @@ function AC.Matches(recipe, query)
 	return false
 end
 
+-- Recipe filters ----------------------------------------------------------
+
+local SKILLUP = { optimal = true, medium = true, easy = true }
+AC.FILTERS = { skillup = "Skill-ups only", have = "Have materials", haveBank = "Count bank for \"Have materials\"" }
+
+function AC.CanSkillUp(recipe)
+	return SKILLUP[recipe and recipe.difficulty or ""] == true
+end
+
+-- Makeable now: from bags, or bags + bank with withBank. Recipes with no
+-- reagents always count.
+function AC.HaveMaterials(recipe, withBank)
+	local bags, all, has = AC.Craftable(recipe)
+	if not has then return true end
+	return (withBank and all or bags) >= 1
+end
+
+function AC.Filters()
+	local f = db and db.filters or {}
+	return f.skillup == true, f.have == true, f.haveBank == true
+end
+
+function AC.FiltersActive()
+	local su, hv = AC.Filters()
+	return su or hv
+end
+
+function AC.PassesFilters(recipe)
+	local su, hv, bank = AC.Filters()
+	if su and not AC.CanSkillUp(recipe) then return false end
+	if hv and not AC.HaveMaterials(recipe, bank) then return false end
+	return true
+end
+
+-- Names of the filters that are on, for messages.
+function AC.ActiveFilterNames()
+	local su, hv, bank = AC.Filters()
+	local t = {}
+	if su then t[#t + 1] = AC.FILTERS.skillup end
+	if hv then t[#t + 1] = AC.FILTERS.have .. (bank and " (bags + bank)" or "") end
+	return t
+end
+
+-- key: "skillup", "have" or "haveBank"; value nil toggles. Returns the new value.
+function AC.SetFilter(key, value)
+	if not (db and AC.FILTERS[key]) then return nil end
+	if value == nil then value = not db.filters[key] end
+	db.filters[key] = value and true or false
+	if AC.Refresh then AC.Refresh() end
+	if AC.RefreshPanel then AC.RefreshPanel() end
+	return db.filters[key]
+end
+
 -- Visible rows for a profession: headers (in first-seen order) and recipes.
--- Collapsed headers hide their recipes unless a search is active.
+-- Collapsed headers hide their recipes unless a search is active. While a
+-- search or a filter is active, headers with nothing left under them are hidden.
 function AC.BuildRows(profName, query)
 	local rows = {}
 	local p = cdb and cdb.professions[profName]
@@ -456,12 +577,13 @@ function AC.BuildRows(profName, query)
 	for _, r in ipairs(p.recipes) do
 		local h = r.header or "Recipes"
 		if not groups[h] then groups[h] = {} order[#order + 1] = h end
-		if AC.Matches(r, query) then groups[h][#groups[h] + 1] = r end
+		if AC.Matches(r, query) and AC.PassesFilters(r) then groups[h][#groups[h] + 1] = r end
 	end
 	local searching = lower(query):match("%S") ~= nil
+	local narrowing = searching or AC.FiltersActive()
 	for _, h in ipairs(order) do
 		local list = groups[h]
-		if #list > 0 or not searching then
+		if #list > 0 or not narrowing then
 			local isCollapsed = collapsed[h] and not searching
 			rows[#rows + 1] = { header = h, collapsed = isCollapsed and true or false, count = #list }
 			if not isCollapsed then
@@ -766,6 +888,34 @@ local function buildFrame()
 	search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 	ui.search = search
 
+	-- Filter checkboxes, top right of the window, across from search.
+	local function filterBox(key, text, x)
+		local cb = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+		cb:SetSize(22, 22)
+		cb:SetPoint("TOPLEFT", frame, "TOPRIGHT", x, -71)
+		local fs = label(cb, "GameFontHighlightSmall", text)
+		fs:SetPoint("LEFT", cb, "RIGHT", 1, 1)
+		cb:SetScript("OnClick", function(self) AC.SetFilter(key, self:GetChecked() and true or false) end)
+		cb:SetScript("OnEnter", function(self)
+			if not GameTooltip then return end
+			GameTooltip:SetOwner(self, "ANCHOR_TOP")
+			GameTooltip:ClearLines()
+			if key == "skillup" then
+				GameTooltip:AddLine("Only recipes that can still raise your skill (orange, yellow or green). Hides grey.", 1, 1, 1, true)
+			elseif key == "have" then
+				GameTooltip:AddLine("Only recipes you can make at least one of right now.", 1, 1, 1, true)
+			else
+				GameTooltip:AddLine("Have materials also counts what's in your bank (as of your last bank visit).", 1, 1, 1, true)
+			end
+			GameTooltip:Show()
+		end)
+		cb:SetScript("OnLeave", hideTooltip)
+		return cb
+	end
+	ui.fSkill = filterBox("skillup", "Skill-ups only", -330)
+	ui.fHave = filterBox("have", "Have materials", -215)
+	ui.fBank = filterBox("haveBank", "+ bank", -95)
+
 	-- Recipe list.
 	local scroll = CreateFrame("ScrollFrame", "AlchemistsCookbookList", frame, "UIPanelScrollFrameTemplate")
 	scroll:SetPoint("TOPLEFT", 20, -98)
@@ -965,12 +1115,26 @@ function AC.Refresh()
 		ui.rank:SetText("")
 		ui.saved:SetText("")
 	end
+	local su, hv, bk = AC.Filters()
+	ui.fSkill:SetChecked(su)
+	ui.fHave:SetChecked(hv)
+	ui.fBank:SetChecked(bk)
+	-- "+ bank" only makes sense with Have materials, so it's hidden until then (its value is kept).
+	if hv then ui.fBank:Show() else ui.fBank:Hide() end
 	local rows = AC.BuildRows(selectedProf, ui.search:GetText())
 	AC._rows = rows -- tests
 	if #names == 0 then
 		ui.empty:SetText("Nothing saved yet. Open each of your professions once (the normal way) and the Cookbook will remember it.")
 	elseif #rows == 0 then
-		ui.empty:SetText("No recipes match.")
+		local on = AC.ActiveFilterNames()
+		local searching = (ui.search:GetText() or ""):match("%S")
+		if #on > 0 then
+			ui.empty:SetText(format("Nothing in %s matches %s%s right now. Untick a filter%s to see more.",
+				selectedProf or "this profession", searching and "your search and " or "", table.concat(on, " + "),
+				searching and " or clear the search" or ""))
+		else
+			ui.empty:SetText("No recipes match your search.")
+		end
 	else
 		ui.empty:SetText("")
 	end
@@ -1193,8 +1357,26 @@ local function buildPanel()
 	cb:SetScript("OnClick", function(self) AC.SetMinimapShown(self:GetChecked() and true or false) AC.RefreshPanel() end)
 	pui.minimap = cb
 
+	local fl = label(p, "GameFontNormal", "Recipe filters (also at the top right of the Cookbook window):")
+	fl:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 2, -14)
+	local last = fl
+	local function filterCheck(key, text, indent)
+		local f = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
+		f:SetSize(26, 26)
+		f:SetPoint("TOPLEFT", last, "BOTTOMLEFT", (last == fl and -2 or 0) + (indent or 0), last == fl and -6 or -2)
+		local fsl = label(f, "GameFontHighlight", text)
+		fsl:SetPoint("LEFT", f, "RIGHT", 2, 1)
+		f:SetScript("OnClick", function(self) AC.SetFilter(key, self:GetChecked() and true or false) end)
+		last = f
+		return f
+	end
+	pui.fSkill = filterCheck("skillup", "Skill-ups only: hide grey recipes that can't raise your skill")
+	pui.fHave = filterCheck("have", "Have materials: only recipes you can make right now")
+	pui.fBank = filterCheck("haveBank", "Count your bank too (for Have materials)", 20)
+
 	local sl = label(p, "GameFontHighlight", "Window size:")
-	sl:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 4, -16)
+	sl:SetPoint("TOPLEFT", pui.fBank, "BOTTOMLEFT", -16, -16)
+	pui.sizeLabel = sl
 	local minus = pushButton(p, "-", 26, function() AC.SetScale((db.scale or 1) - SCALE_STEP) AC.RefreshPanel() end)
 	minus:SetPoint("LEFT", sl, "RIGHT", 10, 0)
 	local val = label(p, "GameFontHighlight", "", 50)
@@ -1223,6 +1405,19 @@ end
 function AC.RefreshPanel()
 	if not (pui and db) then return end
 	pui.minimap:SetChecked(not db.minimap.hide)
+	pui.fSkill:SetChecked(db.filters.skillup)
+	pui.fHave:SetChecked(db.filters.have)
+	pui.fBank:SetChecked(db.filters.haveBank)
+	-- "Count your bank too" is hidden until Have materials is ticked (its value is kept);
+	-- the rows below move up into its place while it's hidden.
+	pui.sizeLabel:ClearAllPoints()
+	if db.filters.have then
+		pui.fBank:Show()
+		pui.sizeLabel:SetPoint("TOPLEFT", pui.fBank, "BOTTOMLEFT", -16, -16)
+	else
+		pui.fBank:Hide()
+		pui.sizeLabel:SetPoint("TOPLEFT", pui.fHave, "BOTTOMLEFT", 4, -16)
+	end
 	pui.scale:SetText(format("%d%%", floor((db.scale or 1) * 100 + 0.5)))
 	if (db.scale or 1) <= SCALE_MIN + 0.001 then pui.minus:Disable() else pui.minus:Enable() end
 	if (db.scale or 1) >= SCALE_MAX - 0.001 then pui.plus:Disable() else pui.plus:Enable() end
@@ -1239,7 +1434,11 @@ function AC.RegisterPanel()
 	panel = buildPanel()
 	panel.name = AC.NAME
 	panel.OnCommit = function() end
-	panel.OnDefault = function() AC.SetMinimapShown(true) AC.ResetPosition() end
+	panel.OnDefault = function()
+		AC.SetMinimapShown(true)
+		AC.SetFilter("skillup", false) AC.SetFilter("have", false) AC.SetFilter("haveBank", false)
+		AC.ResetPosition()
+	end
 	panel.OnRefresh = function() AC.RefreshPanel() end
 	panel.okay, panel.default, panel.refresh = panel.OnCommit, panel.OnDefault, panel.OnRefresh
 	AC.panel = panel
@@ -1289,6 +1488,9 @@ local function help()
 	out("  /acook <profession>  - open it on that profession, e.g. /acook black")
 	out("  /acook list  - professions saved on this character")
 	out("  /acook options  - settings page (minimap button, size, position)")
+	out("  /acook skillup [on|off]  - only recipes that can still give a skill-up")
+	out("  /acook have [on|off]  - only recipes you have materials for")
+	out("  /acook bank [on|off]  - let \"have\" count your bank too")
 	out("  /acook minimap  - show or hide the minimap button")
 	out("  /acook scale <60-150>  - window size in percent")
 	out("  /acook reset  - move the window back to the middle")
@@ -1317,6 +1519,12 @@ function AC.Slash(msg)
 		AC.Hide()
 	elseif cmd == "options" or cmd == "config" or cmd == "settings" then
 		AC.OpenOptions()
+	elseif cmd == "skillup" or cmd == "skillups" or cmd == "have" or cmd == "mats" or cmd == "bank" then
+		local key = (cmd == "skillup" or cmd == "skillups") and "skillup" or (cmd == "bank" and "haveBank" or "have")
+		local arg = (rest or ""):lower()
+		local v = AC.SetFilter(key, arg == "on" and true or (arg == "off" and false or nil))
+		out("%s %s.", AC.FILTERS[key], v and "|cff20ff20on|r" or "|cffff4040off|r")
+		if key == "haveBank" and v and not db.filters.have then out("(Turn on Have materials with /acook have to use it.)") end
 	elseif cmd == "minimap" then
 		AC.SetMinimapShown(db.minimap.hide)
 		out("Minimap button %s.", db.minimap.hide and "hidden" or "shown")
@@ -1385,6 +1593,11 @@ if CreateFrame then
 			if not db then AlchemistsCookbookDB, AlchemistsCookbookCharDB = AC.InitDB(AlchemistsCookbookDB, AlchemistsCookbookCharDB) end
 			createButton()
 			AC.RegisterPanel()
+			if (AC.purgedOnLoad or 0) > 0 then
+				out("Removed %d saved list%s with no profession name (shown as \"Unknown\"). Open that profession again to re-save it.",
+					AC.purgedOnLoad, AC.purgedOnLoad == 1 and "" or "s")
+				AC.purgedOnLoad = 0
+			end
 		elseif not db then
 			return
 		elseif TRADE_EVENTS[event] ~= nil then

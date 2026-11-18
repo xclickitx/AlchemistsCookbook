@@ -9,6 +9,7 @@ Alchemist's Cookbook fixes that. Every time you open a profession, it quietly sa
 - One tab for each profession you've opened, all in one movable window
 - Search by recipe name or reagent (type "tin" to find everything that uses it)
 - How many of each recipe you can make right now, shown next to its name
+- Filters for "Skill-ups only" (hide grey recipes) and "Have materials" (only what you can make right now, optionally counting your bank)
 - Reagent counts as "have / need", colored green, yellow (counting your bank) or red
 - Item tooltips on hover, plus a live line showing what you're crafting and how many are left (for example "Crafting [Tin Bar]: 2 of 5 done, 3 left")
 - Minimap button, keybind, `/acook` or `/cookbook`, and a settings page under Options > AddOns
@@ -63,9 +64,10 @@ The Cookbook only reads. It never crafts, casts, or opens or closes a profession
   - green: enough in your bags
   - yellow: enough if you count your bank (what the game remembers from your last bank visit)
   - red: not enough
+- **Filters** at the top right of the window, across from search (and on the settings page): **Skill-ups only** hides grey recipes that can't raise your skill; **Have materials** shows only recipes you can make at least one of from your bags right now, and **+ bank** (shown once Have materials is ticked) lets it count your bank too. They combine with each other and with search, empty headers are hidden, and if nothing is left a short message says which filters are on. Saved per account.
 - **Live crafting line** at the bottom while you repeat-craft, for example `Crafting [Tin Bar]: 2 of 5 done, 3 left`. It clears when the batch finishes, when you jump or move to cancel, or about 8 seconds after crafting stops on its own.
 - **Opening it:** minimap button (left-click open/close, right-click or shift-click for settings, drag to move), a keybind under Esc > Options > Keybindings > AddOns > Alchemist's Cookbook, `/acook` or `/cookbook`, and Esc closes it. The window can be dragged and remembers where you put it.
-- **Settings page** under Esc > Options > AddOns > Alchemist's Cookbook (`/acook options`): Open Cookbook button, show minimap button, window size (60 to 150%), reset window position, and a list of what's saved on this character.
+- **Settings page** under Esc > Options > AddOns > Alchemist's Cookbook (`/acook options`): Open Cookbook button, show minimap button, the recipe filters, window size (60 to 150%), reset window position, and a list of what's saved on this character.
 
 Recipes are saved per character (`SavedVariablesPerCharacter: AlchemistsCookbookCharDB`); window and minimap settings are per account (`SavedVariables: AlchemistsCookbookDB`).
 
@@ -80,6 +82,9 @@ Both slash commands do the same thing: `/acook` or `/cookbook`.
 | `/acook <profession>` | Open on that profession; the start of the name is enough (`/acook black`, `/acook mining`) |
 | `/acook list` | Professions saved on this character, with recipe counts and skill |
 | `/acook options` | Settings page (also `config`, `settings`) |
+| `/acook skillup [on\|off]` | Toggle **Skill-ups only** (hide grey recipes) |
+| `/acook have [on\|off]` | Toggle **Have materials** (only recipes you can make right now) |
+| `/acook bank [on\|off]` | Let **Have materials** count your bank too |
 | `/acook minimap` | Show or hide the minimap button |
 | `/acook scale <60-150>` | Window size in percent (`/acook scale 90`) |
 | `/acook reset` | Move the window back to the middle at 100% |
@@ -87,7 +92,7 @@ Both slash commands do the same thing: `/acook` or `/cookbook`.
 
 ## Install
 
-1. Download `AlchemistsCookbook-1.0.1.zip`.
+1. Download `AlchemistsCookbook-1.0.2.zip`.
 2. Close World of Warcraft.
 3. Extract the `AlchemistsCookbook` folder into your WoW Forever add-ons directory:
 

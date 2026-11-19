@@ -60,12 +60,12 @@ Suggested tags, if the form offers them: `professions`, `tradeskill`, `crafting`
 
 WoW Forever is a selectable flavor on CurseForge with game version **1.60.1** (confirmed for Grey Dump on 13 November 2026: CurseForge's own launch post, [WoW Forever Launch: New Addons & Hidden Gems on CurseForge](https://blog.curseforge.com/step-into-eternity-celebrating-the-launch-of-wow-forever-on-curseforge/), and existing Forever add-ons listing Flavor: Forever, Game Versions: 1.60.1).
 
-When you upload `AlchemistsCookbook-1.0.3.zip`:
+When you upload `AlchemistsCookbook-1.0.4.zip`:
 
 - Game / flavor: **World of Warcraft**, flavor **Forever** (sometimes shown as "WoW Forever")
 - Supported version: **1.60.1**
 - Release type: **Release**
-- Changelog: paste the 1.0.3 and 1.0.2 sections from `CHANGELOG.md` (it's the first public upload, so you can also paste the 1.0.0 section under it)
+- Changelog: paste the 1.0.4, 1.0.3 and 1.0.2 sections from `CHANGELOG.md` (it's the first public upload, so you can also paste the 1.0.0 section under it)
 
 Tag the file with the Forever 1.60.1 version only. Do not also tag Retail or Classic unless those clients are tested later.
 
@@ -73,7 +73,7 @@ Tag the file with the Forever 1.60.1 version only. Do not also tag Retail or Cla
 
 Use the clean player zip, not a git checkout:
 
-`AlchemistsCookbook-1.0.3.zip` (in this folder; ignored by git, so attach it to the GitHub release by hand)
+`AlchemistsCookbook-1.0.4.zip` (in this folder; ignored by git, so attach it to the GitHub release by hand)
 
 The zip's top level must be the `AlchemistsCookbook/` folder (`AlchemistsCookbook/AlchemistsCookbook.toc`, `AlchemistsCookbook/AlchemistsCookbook.lua`, `AlchemistsCookbook/Bindings.xml`, `AlchemistsCookbook/LICENSE.txt`). No `test/`, no nested `AlchemistsCookbook/AlchemistsCookbook/` folder.
 
@@ -89,4 +89,4 @@ All are 1920x1080 JPGs under 1 MB in `screenshots/`.
 
 ## Still needed from you before anything goes live
 
-- After the user tests 1.0.3: push `main` to https://github.com/xclickitx/AlchemistsCookbook and attach `AlchemistsCookbook-1.0.3.zip` to a `v1.0.3` release
+- After the user tests 1.0.4: push `main` to https://github.com/xclickitx/AlchemistsCookbook and attach `AlchemistsCookbook-1.0.4.zip` to a `v1.0.4` release

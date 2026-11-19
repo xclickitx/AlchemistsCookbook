@@ -1,4 +1,4 @@
--- Alchemist's Cookbook 1.0.3 by ClickIT, for WoW Forever (Interface 16001).
+-- Alchemist's Cookbook 1.0.4 by ClickIT, for WoW Forever (Interface 16001).
 --
 -- Opening a second profession window closes the first one, and that cancels a
 -- repeat craft (smelting x20, potions xN). Alchemist's Cookbook saves each
@@ -19,12 +19,11 @@
 -- GetTradeSkillInfo / GetCraftInfo globals are kept only as guarded fallbacks
 -- (the Forever client ships the modern Professions UI, not the classic one).
 
-local ADDON = ...
-ADDON = ADDON or "AlchemistsCookbook"
+local addonName = ... or "AlchemistsCookbook"
 
 local AC = {}
 _G.AlchemistsCookbook = AC
-AC.VERSION = "1.0.3"
+AC.VERSION = "1.0.4"
 AC.NAME = "Alchemist's Cookbook"
 
 local floor, format, tonumber, tostring, type, select = math.floor, string.format, tonumber, tostring, type, select
@@ -1749,7 +1748,7 @@ if CreateFrame then
 	end
 	for _, e in ipairs(CHAT_EVENTS) do pcall(ev.RegisterEvent, ev, e) end
 	ev:SetScript("OnEvent", function(_, event, a1, a2, a3)
-		if event == "ADDON_LOADED" and a1 == ADDON then
+		if event == "ADDON_LOADED" and a1 == addonName then
 			AlchemistsCookbookDB, AlchemistsCookbookCharDB = AC.InitDB(AlchemistsCookbookDB, AlchemistsCookbookCharDB)
 			AC.RegisterPanel()
 		elseif event == "PLAYER_LOGIN" then

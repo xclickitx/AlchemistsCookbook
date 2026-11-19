@@ -230,7 +230,7 @@ local AC = AlchemistsCookbook
 local ev = AC._ev
 local function fire(e, ...) ev.scripts.OnEvent(ev, e, ...) end
 fire("ADDON_LOADED", "AlchemistsCookbook"); fire("PLAYER_LOGIN")
-ok(AC.VERSION == "1.0.3", "version 1.0.3")
+ok(AC.VERSION == "1.0.4", "version 1.0.4")
 ok(AlchemistsCookbookDB.filters.skillup == false and AlchemistsCookbookDB.filters.have == false and AlchemistsCookbookDB.filters.haveBank == false, "filters default off")
 ok(AlchemistsCookbookDB.scale == 1 and AlchemistsCookbookDB.minimap.hide == false, "account defaults")
 ok(type(AlchemistsCookbookCharDB.professions) == "table", "per-character db")

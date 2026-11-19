@@ -92,7 +92,7 @@ Both slash commands do the same thing: `/acook` or `/cookbook`.
 
 ## Install
 
-1. Download `AlchemistsCookbook-1.0.3.zip`.
+1. Download `AlchemistsCookbook-1.0.4.zip`.
 2. Close World of Warcraft.
 3. Extract the `AlchemistsCookbook` folder into your WoW Forever add-ons directory:
 

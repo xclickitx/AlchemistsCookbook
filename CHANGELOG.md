@@ -2,6 +2,10 @@
 
 All notable changes to Alchemist's Cookbook are listed here.
 
+## 1.0.4
+
+- Code cleanup: removed a leaked global variable. The add-on name is now kept in a local (`addonName`) instead of a follow-up assignment that looked like a global write to lint tools.
+
 ## 1.0.3
 
 - Fixed: item tooltips in the Cookbook could compare against the wrong gear. While crafting (for example smelting with the Mining window open), hovering a weapon could show "Equipped With: Mining Pick" and a "Press SHIFT-C to cycle through your main-hand items" line, because the game paired the item with the profession tool in your bags.

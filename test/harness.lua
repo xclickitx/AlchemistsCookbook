@@ -197,8 +197,39 @@ local function mkFrame(ftype, name, parent, template)
     f.SetHyperlink = function(self, l) tipLink = l; self.link = l; self.invSlot = nil end
     f.SetItemByID = function(self, id) tipLink = "item:"..id; self.link = tipLink; self.invSlot = nil end
     f.SetInventoryItem = function(self, unit, slot) self.invSlot = slot; self.link = EQUIPPED_INV[slot]; return self.link ~= nil end
-    f.NumLines = function(self) return rawget(self, "link") and 3 or 0 end
-    f.SetOwner = function(self, o, a) self.owner, self.anchor = o, a; self.link = nil end
+    f.GetName = function() return name end
+    f.priceLines = {}
+    f.ClearLines = function(self)
+      self.priceLines = {}
+      if name then
+        local i = 1
+        while _G[name.."TextLeft"..i] or _G[name.."TextRight"..i] do
+          _G[name.."TextLeft"..i] = nil
+          _G[name.."TextRight"..i] = nil
+          i = i + 1
+        end
+      end
+    end
+    f.AddDoubleLine = function(self, left, right)
+      self.priceLines = self.priceLines or {}
+      self.priceLines[#self.priceLines+1] = left
+      if name then
+        local i = #self.priceLines
+        _G[name.."TextLeft"..i] = { GetText = function() return left end, text = left }
+        _G[name.."TextRight"..i] = { GetText = function() return right end, text = right }
+      end
+    end
+    f.AddLine = function(self, text) self:AddDoubleLine(text, nil) end
+    f.NumLines = function(self)
+      local extra = self.priceLines and #self.priceLines or 0
+      if extra > 0 then return extra end
+      return rawget(self, "link") and 3 or 0
+    end
+    f.SetOwner = function(self, o, a)
+      self.owner, self.anchor = o, a
+      self.link = nil
+      if self.ClearLines then self:ClearLines() end
+    end
     f.GetWidth = function() return 200 end
     f.GetRight = function(self) return rawget(self, "right") or 600 end
     f.GetLeft = function(self) return (rawget(self, "right") or 600) - 200 end
@@ -230,7 +261,67 @@ local AC = AlchemistsCookbook
 local ev = AC._ev
 local function fire(e, ...) ev.scripts.OnEvent(ev, e, ...) end
 fire("ADDON_LOADED", "AlchemistsCookbook"); fire("PLAYER_LOGIN")
-ok(AC.VERSION == "1.0.4", "version 1.0.4")
+ok(AC.VERSION == "1.0.5", "version 1.0.5")
+
+-- Auctionator prices (1.0.5): helpers work with or without it. No settings.
+ok(AC.AuctionatorAPI() == nil, "Auctionator absent: API nil")
+ok(AC.MoneyText(48) == "48c" and AC.MoneyText(150) == "1s 50c" and AC.MoneyText(10000) == "1g" and AC.MoneyText(10050) == "1g 50c", "money fallback")
+do
+  local copperR = { name = "Smelt Copper", itemID = 2840, link = link(2840), numMin = 1, reagents = { { id = 2770, count = 1 } } }
+  local enchantR = { name = "Enchant Bracer", reagents = { { id = 2770, count = 2 } }, numMin = 1 }
+  ok(AC.CraftPriceText(copperR) == nil and select(3, AC.CraftCost(copperR)) == false, "Auctionator absent: no price text")
+
+  local prices, vendor = {}, {}
+  Auctionator = { API = { v1 = {
+    GetAuctionPriceByItemID = function(caller, id)
+      if caller ~= "Alchemist's Cookbook" then error("bad caller") end
+      return prices[id]
+    end,
+    GetAuctionPriceByItemLink = function(caller, itemLink)
+      if caller ~= "Alchemist's Cookbook" then error("bad caller") end
+      local id = tonumber(itemLink:match("item:(%d+)"))
+      return id and prices[id]
+    end,
+    GetVendorPriceByItemID = function(caller, id)
+      if caller ~= "Alchemist's Cookbook" then error("bad caller") end
+      return vendor[id]
+    end,
+  } } }
+  ok(AC.AuctionatorAPI() ~= nil, "Auctionator present: API found")
+
+  vendor[2770], prices[2840] = 10, 20
+  local cost, inc, ready = AC.CraftCost(copperR)
+  ok(ready and cost == 10 and inc == false, "full prices: cost uses vendor")
+  ok(AC.CraftProfit(copperR, cost) == 9, "full prices: profit 20*0.95-10 = 9")
+  local text = AC.CraftPriceText(copperR)
+  ok(text == "To Craft: 10c\nProfit: 9c", "full prices text: "..tostring(text))
+
+  vendor[2770], prices[2770], prices[2840] = 100, 10, 20
+  ok(AC.CraftCost(copperR) == 10, "vendor > 5x AH uses auction price")
+
+  vendor[2770], prices[2770], prices[2840] = nil, nil, 20
+  cost, inc = AC.CraftCost(copperR)
+  ok(cost == 0 and inc == true, "missing reagent price: cost 0 incomplete")
+  text = AC.CraftPriceText(copperR)
+  ok(text and text:find("To Craft: 0c (incomplete)", 1, true) and text:find("Profit:", 1, true), "incomplete marker: "..tostring(text))
+
+  vendor[2770], prices[2770], prices[2840] = nil, 50, 40
+  text = AC.CraftPriceText(copperR)
+  ok(text and text:find("To Craft: 50c", 1, true) and text:find("|cffff4040-12c|r", 1, true), "loss in red: "..tostring(text))
+
+  prices[2770] = 10
+  text = AC.CraftPriceText(enchantR)
+  ok(text == "To Craft: 20c", "no-output recipe: cost only, no profit: "..tostring(text))
+
+  Auctionator.API.v1.GetAuctionPriceByItemID = function() error("boom") end
+  Auctionator.API.v1.GetAuctionPriceByItemLink = function() error("boom") end
+  Auctionator.API.v1.GetVendorPriceByItemID = function() error("boom") end
+  ok(AC.CraftPriceText(copperR):find("(incomplete)", 1, true) and AC.CraftProfit(copperR, 0) == nil, "API errors are swallowed")
+
+  Auctionator = nil
+  ok(AC.AuctionatorAPI() == nil and AC.CraftPriceText(copperR) == nil, "Auctionator cleared")
+end
+
 ok(AlchemistsCookbookDB.filters.skillup == false and AlchemistsCookbookDB.filters.have == false and AlchemistsCookbookDB.filters.haveBank == false, "filters default off")
 ok(AlchemistsCookbookDB.scale == 1 and AlchemistsCookbookDB.minimap.hide == false, "account defaults")
 ok(type(AlchemistsCookbookCharDB.professions) == "table", "per-character db")
@@ -338,6 +429,7 @@ copperRow.scripts.OnEnter(copperRow); ok(tipLink and tipLink:find("item:2840", 1
 copperRow.scripts.OnClick(copperRow)
 ok(U.reagents[1]:IsShown() and U.reagents[1].have.text:find("have 23|r / need 1", 1, true), "reagent have/need")
 ok(U.dCraft.text == "You can make 23 now.", "craft-now line")
+ok(U.dCost and not U.dCost:IsShown() and (not U.dCost.text or U.dCost.text == ""), "no Auctionator: price line hidden")
 ok(U.dTools.text == "Requires: Forge", "tools line")
 U.reagents[1].scripts.OnEnter(U.reagents[1]); ok(tipLink and tipLink:find("item:2770", 1, true), "reagent tooltip")
 -- 1.0.3: our own item tooltip, comparing only with what you actually wear
@@ -407,6 +499,85 @@ do
   ok(gtUsed == 0 and rawget(_G, "ShoppingTooltip1") == nil, "never touched GameTooltip or ShoppingTooltip1/2")
   rawset(GameTooltip, "SetHyperlink", gtSet); rawset(GameTooltip, "SetItemByID", gtItem)
   alwaysCompare = false; EQUIPPED_INV[17], EQUIPPED_INV[11], EQUIPPED_INV[12] = nil, nil, nil
+  -- No Auctionator at this point: hovering must not error or add price lines
+  AC._tooltipFor(owner, link(2840), 2840, 1)
+  ok(not AC.TooltipHasAuctionatorPrices(tip), "no Auctionator: item tooltip has no Vendor/Auction lines")
+end
+
+-- Auctionator prices on Cookbook item tooltips (1.0.5)
+do
+  local tip = AlchemistsCookbookTooltip
+  local owner = mkFrame("Button")
+  local calls = {}
+  Auctionator = {
+    API = { v1 = {
+      GetAuctionPriceByItemID = function(_, id) return ({[2770]=53,[2840]=40})[id] end,
+      GetAuctionPriceByItemLink = function(_, itemLink)
+        local id = tonumber(itemLink:match("item:(%d+)"))
+        return id and ({[2770]=53,[2840]=40})[id]
+      end,
+      GetVendorPriceByItemID = function() return nil end,
+    } },
+    Tooltip = {
+      ShowTipWithPricing = function(frame, itemLink, itemCount)
+        calls[#calls+1] = { tip = frame, link = itemLink, count = itemCount }
+        frame:AddDoubleLine("Vendor", "40c")
+        local auc = "53c"
+        if itemCount and itemCount > 1 then auc = "53c / 54c" end
+        frame:AddDoubleLine("Auction", auc)
+      end,
+    },
+  }
+  AC._tooltipFor(owner, link(2840), 2840, 1)
+  ok(#calls == 1 and calls[1].tip == tip and calls[1].count == 1 and tostring(calls[1].link):find("item:2840", 1, true), "ShowTipWithPricing called on Cookbook tooltip for output")
+  ok(AC.TooltipHasAuctionatorPrices(tip) and tip.priceLines[1] == "Vendor" and tip.priceLines[2] == "Auction", "output tooltip shows Vendor and Auction")
+  local n = #tip.priceLines
+  AC.AddAuctionatorTip(tip, link(2840), 2840, 1)
+  ok(#calls == 1 and #tip.priceLines == n, "does not duplicate Auctionator lines")
+
+  -- recipe list / output icon pass the craft count; reagents pass need
+  calls = {}
+  AC._tooltipFor(owner, link(2770), 2770, 12)
+  ok(#calls == 1 and calls[1].count == 12 and tostring(calls[1].link):find("item:2770", 1, true), "reagent count is passed to Auctionator")
+  local right = _G[tip:GetName().."TextRight2"]
+  ok(right and right.text == "53c / 54c", "stack price format on Auction line: "..tostring(right and right.text))
+
+  -- live reagent row on the selected copper recipe (need 1)
+  local copperRow
+  for _, r in ipairs(U.rows) do
+    local d = rawget(r, "data")
+    if d and d.recipe and d.recipe.id == 2657 then copperRow = r end
+  end
+  ok(copperRow, "copper row for reagent tooltip test")
+  if copperRow then copperRow.scripts.OnClick(copperRow) end
+  calls = {}
+  U.reagents[1].scripts.OnEnter(U.reagents[1])
+  ok(#calls == 1 and calls[1].tip == tip and calls[1].count == 1 and tostring(calls[1].link):find("item:2770", 1, true), "reagent row tooltip uses Auctionator with need count")
+  U.icon.scripts.OnEnter(U.icon)
+  ok(#calls == 2 and calls[2].count == 1 and tostring(calls[2].link):find("item:2840", 1, true), "output icon tooltip uses Auctionator")
+
+  calls = {}
+  AC._tooltipFor(owner, "|cff71d5ff|Hspell:2657|h[Smelt Copper]|h|r", nil)
+  ok(#calls == 0 and not AC.TooltipHasAuctionatorPrices(tip), "spell link: no Auctionator item prices")
+
+  Auctionator.Tooltip.ShowTipWithPricing = function() error("boom") end
+  AC._tooltipFor(owner, link(2840), 2840, 1)
+  ok(AC.TooltipHasAuctionatorPrices(tip), "errors in ShowTipWithPricing are swallowed and fallback can still add lines")
+
+  -- Fallback: no ShowTipWithPricing, use API.v1 + vendor sell price
+  Auctionator.Tooltip = nil
+  AC._tooltipFor(owner, link(2770), 2770, 2)
+  local auctionAmt
+  for i, line in ipairs(tip.priceLines or {}) do
+    if line == "Auction" then
+      local fs = _G[tip:GetName().."TextRight"..i]
+      auctionAmt = fs and fs.text
+    end
+  end
+  ok(AC.TooltipHasAuctionatorPrices(tip) and auctionAmt == "53c / 1s 6c", "fallback stack format: "..tostring(auctionAmt))
+
+  Auctionator = nil
+  U.reagents[1].scripts.OnLeave(U.reagents[1])
 end
 local bronzeRow; for _, r in ipairs(U.rows) do local d = rawget(r, "data") if d and d.recipe == bronze then bronzeRow = r end end
 bronzeRow.scripts.OnClick(bronzeRow)
@@ -532,6 +703,46 @@ ok(ev.events.CHAT_MSG_LOOT and ev.events.CHAT_MSG_TRADESKILLS, "chat events regi
 ok(AC.ParseCreated("You create: "..link(2840)..".") == 2840 and AC.ParseCreated("Bob creates: "..link(2840)) == nil, "ParseCreated")
 LOOT_ITEM_CREATED_SELF = "Vous créez : %s."; ok(AC.ParseCreated("Vous créez : "..link(2840)..".") == 2840, "localized create line"); LOOT_ITEM_CREATED_SELF = nil
 runTimers(true)
+
+
+-- Auctionator price line on the detail pane (1.0.5)
+do
+  local prices, vendor = { [2770] = 50, [2840] = 40 }, {}
+  Auctionator = { API = { v1 = {
+    GetAuctionPriceByItemID = function(_, id) return prices[id] end,
+    GetAuctionPriceByItemLink = function(_, itemLink)
+      local id = tonumber(itemLink:match("item:(%d+)"))
+      return id and prices[id]
+    end,
+    GetVendorPriceByItemID = function(_, id) return vendor[id] end,
+  } } }
+  F:Show()
+  if U.search then U.search:SetText("") end
+  -- Switch to Mining only if needed (clicking the current tab would clear the selection)
+  for _, tab in ipairs(U.tabs) do
+    if tab.prof == "Mining" and tab:IsEnabled() and tab.scripts.OnClick then
+      tab.scripts.OnClick(tab)
+      break
+    end
+  end
+  local copperRow
+  for _, r in ipairs(U.rows) do
+    local d = rawget(r, "data")
+    if d and d.recipe and d.recipe.id == 2657 then copperRow = r end
+  end
+  ok(copperRow, "Mining copper row available for price-line test")
+  if copperRow then copperRow.scripts.OnClick(copperRow) end
+  local text = U.dCost and U.dCost.text
+  ok(U.dCost:IsShown() and text and text:find("To Craft: 50c", 1, true) and text:find("|cffff4040-12c|r", 1, true), "detail shows To Craft / red Profit: "..tostring(text))
+  -- missing reagent price marks incomplete; profit still uses the product price
+  prices[2770] = nil
+  AC.Refresh()
+  text = U.dCost.text
+  ok(U.dCost:IsShown() and text:find("To Craft: 0c (incomplete)", 1, true) and text:find("Profit:", 1, true), "detail incomplete: "..tostring(text))
+  Auctionator = nil
+  AC.Refresh()
+  ok(not U.dCost:IsShown() and (not U.dCost.text or U.dCost.text == ""), "price line hides again when Auctionator is gone")
+end
 
 -- filters (1.0.2)
 do

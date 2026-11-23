@@ -1,4 +1,4 @@
--- Alchemist's Cookbook 1.0.4 by ClickIT, for WoW Forever (Interface 16001).
+-- Alchemist's Cookbook 1.0.5 by ClickIT, for WoW Forever (Interface 16001).
 --
 -- Opening a second profession window closes the first one, and that cancels a
 -- repeat craft (smelting x20, potions xN). Alchemist's Cookbook saves each
@@ -8,6 +8,8 @@
 --
 -- It only READS. It never casts, crafts, opens or closes a profession window,
 -- and uses no secure templates, so nothing it does can be a protected action.
+-- If Auctionator is loaded, the recipe detail also shows To Craft / Profit from
+-- its last scanned prices. If it isn't, the window looks exactly as it did before.
 --
 -- Client API, checked against the Forever 1.60.1 client's own files
 -- (Blizzard_APIDocumentationGenerated/TradeSkillUIDocumentation.lua and the
@@ -23,7 +25,7 @@ local addonName = ... or "AlchemistsCookbook"
 
 local AC = {}
 _G.AlchemistsCookbook = AC
-AC.VERSION = "1.0.4"
+AC.VERSION = "1.0.5"
 AC.NAME = "Alchemist's Cookbook"
 
 local floor, format, tonumber, tostring, type, select = math.floor, string.format, tonumber, tostring, type, select
@@ -497,6 +499,200 @@ function AC.Craftable(recipe)
 	return bagsMin or 0, allMin or 0, true
 end
 
+-- Optional Auctionator prices (1.0.5). Detected at use time; no settings.
+-- Vendor buy price if present, otherwise AH; AH if vendor is more than 5x AH.
+-- Profit is the product's AH price * numMin * 0.95 (AH cut) minus craft cost.
+local AH_CUT = 0.95
+
+function AC.AuctionatorAPI()
+	local A = _G.Auctionator
+	local v1 = type(A) == "table" and A.API and A.API.v1
+	if type(v1) ~= "table" or type(v1.GetAuctionPriceByItemID) ~= "function" then return nil end
+	return v1
+end
+
+local function moneyText(copper)
+	copper = floor((num(copper) or 0) + 0.5)
+	if copper < 0 then copper = 0 end
+	local s = try(GetMoneyString, copper, true)
+	if s then return s end
+	local g = floor(copper / 10000)
+	local si = floor((copper % 10000) / 100)
+	local c = copper % 100
+	if g > 0 then
+		if si > 0 and c > 0 then return format("%dg %ds %dc", g, si, c) end
+		if si > 0 then return format("%dg %ds", g, si) end
+		if c > 0 then return format("%dg %dc", g, c) end
+		return format("%dg", g)
+	end
+	if si > 0 then
+		if c > 0 then return format("%ds %dc", si, c) end
+		return format("%ds", si)
+	end
+	return format("%dc", c)
+end
+AC.MoneyText = moneyText
+
+-- Unit price in copper, or nil if neither vendor nor AH has one.
+function AC.ItemUnitPrice(api, itemID)
+	itemID = num(itemID)
+	if type(api) ~= "table" or not itemID then return nil end
+	local vendor, auction
+	if type(api.GetVendorPriceByItemID) == "function" then
+		vendor = num(try(api.GetVendorPriceByItemID, AC.NAME, itemID))
+	end
+	if type(api.GetAuctionPriceByItemID) == "function" then
+		auction = num(try(api.GetAuctionPriceByItemID, AC.NAME, itemID))
+	end
+	if vendor and auction and vendor > 5 * auction then return auction end
+	return vendor or auction
+end
+
+-- Returns cost, incomplete, ready. ready is false when Auctionator isn't loaded.
+function AC.CraftCost(recipe)
+	local api = AC.AuctionatorAPI()
+	if not api then return nil, false, false end
+	if type(recipe) ~= "table" or type(recipe.reagents) ~= "table" then return 0, false, true end
+	local total, incomplete = 0, false
+	for i = 1, #recipe.reagents do
+		local rg = recipe.reagents[i]
+		local count = (rg and num(rg.count)) or 1
+		if count < 1 then count = 1 end
+		local unit = AC.ItemUnitPrice(api, rg and rg.id)
+		if unit then
+			total = total + unit * count
+		else
+			incomplete = true
+		end
+	end
+	return total, incomplete, true
+end
+
+-- Product AH * numMin * 0.95 minus cost. Nil when there's no output or no product price.
+function AC.CraftProfit(recipe, cost)
+	local api = AC.AuctionatorAPI()
+	if not api or type(recipe) ~= "table" then return nil end
+	local itemID = num(recipe.itemID)
+	local link = str(recipe.link)
+	if not itemID and not link then return nil end
+	local price
+	if link and type(api.GetAuctionPriceByItemLink) == "function" then
+		price = num(try(api.GetAuctionPriceByItemLink, AC.NAME, link))
+	end
+	if price == nil and itemID then
+		price = num(try(api.GetAuctionPriceByItemID, AC.NAME, itemID))
+	end
+	if price == nil then return nil end
+	return price * (num(recipe.numMin) or 1) * AH_CUT - (num(cost) or 0)
+end
+
+-- "To Craft: ..." and optional "Profit: ..." lines, or nil if Auctionator isn't loaded.
+function AC.CraftPriceText(recipe)
+	local cost, incomplete, ready = AC.CraftCost(recipe)
+	if not ready then return nil end
+	local text = "To Craft: " .. moneyText(cost or 0)
+	if incomplete then text = text .. " (incomplete)" end
+	local profit = AC.CraftProfit(recipe, cost)
+	if profit ~= nil then
+		local ptext
+		if profit < 0 then ptext = "|cffff4040-" .. moneyText(-profit) .. "|r"
+		else ptext = moneyText(profit) end
+		text = text .. "\nProfit: " .. ptext
+	end
+	return text
+end
+
+
+-- Add Auctionator's Vendor / Auction lines to a Cookbook tooltip.
+-- Auctionator only hooks GameTooltip (and a short name whitelist), so our
+-- own tooltip never gets those lines on its own. We call its ShowTipWithPricing
+-- so the formatting matches bags. If that function is missing, we add the
+-- same labels from API.v1 and the item's vendor sell price.
+function AC.TooltipHasAuctionatorPrices(tip)
+	if type(tip) ~= "table" and type(tip) ~= "userdata" then return false end
+	local vendor, auction = "Vendor", "Auction"
+	local A = _G.Auctionator
+	if A and A.Locales and type(A.Locales.Apply) == "function" then
+		vendor = try(A.Locales.Apply, "VENDOR") or vendor
+		auction = try(A.Locales.Apply, "AUCTION") or auction
+	end
+	local function isPrice(text)
+		if type(text) ~= "string" then return false end
+		return text == vendor or text:sub(1, #vendor) == vendor or text == auction or text:sub(1, #auction) == auction
+	end
+	if type(tip.priceLines) == "table" then
+		for i = 1, #tip.priceLines do
+			if isPrice(tip.priceLines[i]) then return true end
+		end
+	end
+	local name = try(tip.GetName, tip)
+	local num = try(tip.NumLines, tip)
+	if type(name) == "string" and type(num) == "number" then
+		for i = 1, num do
+			local fs = _G[name .. "TextLeft" .. i]
+			local text = fs and try(fs.GetText, fs)
+			if isPrice(text) then return true end
+		end
+	end
+	return false
+end
+
+local function itemLinkForTip(link, itemID)
+	if type(link) == "string" and link:find("item:", 1, true) and not link:find("|Hspell:", 1, true) then
+		return link:match("|H(item:[^|]+)") or link
+	end
+	itemID = num(itemID)
+	if not itemID then return nil end
+	local _, l = itemInfo(itemID)
+	return l or ("item:" .. itemID)
+end
+
+local function fallbackTipPrices(tip, api, link, itemID, count)
+	if type(tip.AddDoubleLine) ~= "function" then return end
+	local vendor = num((function()
+		local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+		if type(getInfo) ~= "function" then return end
+		local r = { pcall(getInfo, itemID or link) }
+		if r[1] then return r[12] end
+	end)())
+	local auction
+	if link and type(api.GetAuctionPriceByItemLink) == "function" then
+		auction = num(try(api.GetAuctionPriceByItemLink, AC.NAME, link))
+	end
+	if auction == nil and itemID and type(api.GetAuctionPriceByItemID) == "function" then
+		auction = num(try(api.GetAuctionPriceByItemID, AC.NAME, itemID))
+	end
+	local function amount(unit)
+		if not unit or unit <= 0 then return nil end
+		if count > 1 then return moneyText(unit) .. " / " .. moneyText(unit * count) end
+		return moneyText(unit)
+	end
+	if vendor and vendor > 0 then pcall(tip.AddDoubleLine, tip, "Vendor", amount(vendor)) end
+	if auction and auction > 0 then pcall(tip.AddDoubleLine, tip, "Auction", amount(auction)) end
+end
+
+function AC.AddAuctionatorTip(tip, link, itemID, count)
+	if not tip then return false end
+	local itemLink = itemLinkForTip(link, itemID)
+	if not itemLink then return false end
+	count = num(count) or 1
+	if count < 1 then count = 1 end
+	if AC.TooltipHasAuctionatorPrices(tip) then return false end
+	local A = _G.Auctionator
+	local show = A and A.Tooltip and A.Tooltip.ShowTipWithPricing
+	if type(show) == "function" then
+		if pcall(show, tip, itemLink, count) then
+			after(0, function() if tip.IsShown and tip:IsShown() and tip.Show then tip:Show() end end)
+			return true
+		end
+	end
+	local api = AC.AuctionatorAPI()
+	if not api then return false end
+	if AC.TooltipHasAuctionatorPrices(tip) then return false end
+	fallbackTipPrices(tip, api, itemLink, num(itemID) or itemIDFromLink(itemLink), count)
+	return AC.TooltipHasAuctionatorPrices(tip)
+end
+
 local function lower(s) return type(s) == "string" and s:lower() or "" end
 
 function AC.Matches(recipe, query)
@@ -928,7 +1124,7 @@ function AC.UpdateCompare()
 	return #shown
 end
 
-local function tooltipFor(owner, link, itemID)
+local function tooltipFor(owner, link, itemID, count)
 	local tip = getItemTip() or GameTooltip
 	if not tip then return end
 	if GameTooltip and tip ~= GameTooltip then GameTooltip:Hide() end
@@ -944,6 +1140,7 @@ local function tooltipFor(owner, link, itemID)
 	else
 		return tip:Hide()
 	end
+	AC.AddAuctionatorTip(tip, link, itemID, count)
 	tip:Show()
 	if tip ~= GameTooltip then AC.UpdateCompare() end
 end
@@ -1100,7 +1297,7 @@ local function buildFrame()
 	icon:SetPoint("TOPLEFT", 0, 0)
 	icon.tex = icon:CreateTexture(nil, "ARTWORK")
 	icon.tex:SetAllPoints()
-	icon:SetScript("OnEnter", function(self) local r = selectedRecipe if r then tooltipFor(self, r.link or r.spellLink, r.itemID) end end)
+	icon:SetScript("OnEnter", function(self) local r = selectedRecipe if r then tooltipFor(self, r.link or r.spellLink, r.itemID, r.numMin) end end)
 	icon:SetScript("OnLeave", hideTooltip)
 	ui.icon = icon
 	ui.dName = label(d, "GameFontNormal", "", 280)
@@ -1114,6 +1311,10 @@ local function buildFrame()
 	ui.rhead = label(d, "GameFontNormalSmall", "Reagents", 330)
 	ui.rhead:SetPoint("TOPLEFT", ui.dCraft, "BOTTOMLEFT", 0, -10)
 	ui.reagents = {}
+	-- To Craft / Profit, shown under the reagents only when Auctionator is loaded.
+	ui.dCost = label(d, "GameFontHighlightSmall", "", 330)
+	ui.dCost:SetPoint("TOPLEFT", ui.rhead, "BOTTOMLEFT", 0, -6)
+	ui.dCost:Hide()
 
 	-- Footer: saved time + repeat-craft status.
 	ui.saved = label(frame, "GameFontDisableSmall", "", 620)
@@ -1160,7 +1361,7 @@ local function getRow(i)
 	end)
 	row:SetScript("OnEnter", function(self)
 		local r = self.data and self.data.recipe
-		if r then tooltipFor(self, r.link or r.spellLink, r.itemID) end
+		if r then tooltipFor(self, r.link or r.spellLink, r.itemID, r.numMin) end
 	end)
 	row:SetScript("OnLeave", hideTooltip)
 	ui.rows[i] = row
@@ -1181,7 +1382,7 @@ local function getReagentRow(i)
 	row.have = label(row, "GameFontHighlightSmall", "", 130)
 	row.have:SetPoint("RIGHT", 0, 0)
 	row.have:SetJustifyH("RIGHT")
-	row:SetScript("OnEnter", function(self) local g = self.data if g then tooltipFor(self, g.link, g.id) end end)
+	row:SetScript("OnEnter", function(self) local g = self.data if g then tooltipFor(self, g.link, g.id, g.count) end end)
 	row:SetScript("OnLeave", hideTooltip)
 	ui.reagents[i] = row
 	return row
@@ -1214,6 +1415,7 @@ local function refreshDetail()
 		ui.dCraft:SetText("")
 		ui.rhead:Hide()
 		for _, row in ipairs(ui.reagents) do row:Hide() end
+		if ui.dCost then ui.dCost:SetText("") ui.dCost:Hide() end
 		return
 	end
 	ui.icon:Show()
@@ -1244,6 +1446,21 @@ local function refreshDetail()
 		row:Show()
 	end
 	for i = #r.reagents + 1, #ui.reagents do ui.reagents[i]:Hide() end
+	local price = AC.CraftPriceText(r)
+	if price and ui.dCost then
+		ui.dCost:ClearAllPoints()
+		if #r.reagents > 0 then
+			ui.dCost:SetPoint("TOPLEFT", getReagentRow(#r.reagents), "BOTTOMLEFT", 0, -6)
+		else
+			ui.dCost:SetPoint("TOPLEFT", ui.dCraft, "BOTTOMLEFT", 0, -8)
+		end
+		ui.dCost:SetHeight(price:find("\n", 1, true) and 28 or 14)
+		ui.dCost:SetText(price)
+		ui.dCost:Show()
+	elseif ui.dCost then
+		ui.dCost:SetText("")
+		ui.dCost:Hide()
+	end
 end
 
 function AC.UpdateCastLine()

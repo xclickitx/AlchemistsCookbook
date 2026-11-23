@@ -2,6 +2,13 @@
 
 All notable changes to Alchemist's Cookbook are listed here.
 
+## 1.0.5
+
+- Work in progress: being tested in-game. 1.0.4 remains the current stable release.
+- If Auctionator is loaded, the recipe detail now shows **To Craft** and **Profit** under the reagents, using Auctionator's last scanned prices (vendor buy price when it's the better deal, otherwise the auction price). Profit is the product's auction price, minus the 5% auction house cut, minus the craft cost. A loss is shown in red. Recipes with no item output hide the profit line. If a reagent has no price, the cost is marked `(incomplete)`.
+- Hovering a recipe's output (the icon, the "Makes" item, or the recipe row) or a reagent now shows the same **Vendor** and **Auction** prices Auctionator puts on bag tooltips, including the stack/count price for reagents. The Cookbook still uses its own tooltip (so compare stays limited to the gear you're wearing); it asks Auctionator to add the lines, and won't add them twice. If Auctionator isn't loaded, the tooltip is unchanged.
+- Auctionator is a soft dependency only. If it isn't loaded, the Cookbook looks exactly as it did in 1.0.4: no extra line, no empty gap, and no errors. There is no new setting.
+
 ## 1.0.4
 
 - Code cleanup: removed a leaked global variable. The add-on name is now kept in a local (`addonName`) instead of a follow-up assignment that looked like a global write to lint tools.

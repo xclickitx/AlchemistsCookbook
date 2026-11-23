@@ -5,6 +5,8 @@ You've queued up 200 Tin Bars and settled in. Halfway through, you want to check
 
 Alchemist's Cookbook fixes that. Every time you open a profession, it quietly saves your recipes. After that you can browse any of them in the Cookbook window while your repeat craft keeps going. Nothing gets cancelled until you jump or stop it yourself.
 
+Alchemist's Cookbook is complete on its own. It has no required dependencies.
+
 ## Features
 - One tab for each profession you've opened, all in one movable window
 - Search by recipe name or reagent (type "tin" to find everything that uses it)
@@ -12,7 +14,6 @@ Alchemist's Cookbook fixes that. Every time you open a profession, it quietly sa
 - Filters for "Skill-ups only" (hide grey recipes) and "Have materials" (only what you can make right now, optionally counting your bank)
 - Reagent counts as "have / need", colored green, yellow (counting your bank) or red
 - Item tooltips on hover, plus a live line showing what you're crafting and how many are left (for example "Crafting [Tin Bar]: 2 of 5 done, 3 left")
-- If [Auctionator](https://www.curseforge.com/wow/addons/auctionator) is loaded, **To Craft** / **Profit** under the reagents, and **Vendor** / **Auction** prices on item tooltips. Detected automatically; no setting. Hidden if Auctionator isn't there.
 - Minimap button, keybind, `/acook` or `/cookbook`, and a settings page under Options > AddOns
 
 ## Getting started
@@ -28,7 +29,7 @@ The Cookbook only reads. It never crafts, casts, or opens or closes a profession
 
 *The name is a safe-for-work nod to a certain infamous cookbook from back in the day.* 😉
 
-**Current release:** [1.0.4](https://github.com/xclickitx/AlchemistsCookbook/releases/tag/v1.0.4) is the latest stable build ([GitHub](https://github.com/xclickitx/AlchemistsCookbook/releases/latest) or [CurseForge](https://www.curseforge.com/wow/addons/alchemists-cookbook)). **1.0.5** is a [work-in-progress pre-release](https://github.com/xclickitx/AlchemistsCookbook/releases/tag/v1.0.5) (Auctionator cost, profit, and tooltip prices) and is still being tested in-game.
+**Download:** the [GitHub releases page](https://github.com/xclickitx/AlchemistsCookbook/releases) or [CurseForge](https://www.curseforge.com/wow/addons/alchemists-cookbook). **1.0.5** has been tested in-game on WoW Forever 1.60.1.
 
 ## Screenshots
 
@@ -66,13 +67,22 @@ The Cookbook only reads. It never crafts, casts, or opens or closes a profession
   - yellow: enough if you count your bank (what the game remembers from your last bank visit)
   - red: not enough
 - **Filters** at the top right of the window, across from search (and on the settings page): **Skill-ups only** hides grey recipes that can't raise your skill; **Have materials** shows only recipes you can make at least one of from your bags right now, and **+ bank** (shown once Have materials is ticked) lets it count your bank too. They combine with each other and with search, empty headers are hidden, and if nothing is left a short message says which filters are on. Saved per account.
-- **Craft cost and profit** under the reagents, when [Auctionator](https://www.curseforge.com/wow/addons/auctionator) is loaded: `To Craft: 48c` and `Profit: -5c` (red if a loss). Prices come from Auctionator's last scan: vendor buy price when that's the better deal, otherwise the auction price. Profit is the product's auction price, minus the 5% auction house cut, minus the craft cost. Recipes with no item output hide the profit line. If a reagent has no price, the cost is marked `(incomplete)`. If Auctionator isn't loaded, the extra line is hidden and the window looks as it did before.
-- **Auctionator item prices** on Cookbook tooltips: hovering the output or a reagent shows the same Vendor and Auction lines you get in your bags (including a stack/count price). The Cookbook still uses its own tooltip so gear compare stays limited to what you're wearing. Hidden if Auctionator isn't loaded; never duplicated if Auctionator already added the lines.
 - **Live crafting line** at the bottom while you repeat-craft, for example `Crafting [Tin Bar]: 2 of 5 done, 3 left`. It clears when the batch finishes, when you jump or move to cancel, or about 8 seconds after crafting stops on its own.
 - **Opening it:** minimap button (left-click open/close, right-click or shift-click for settings, drag to move), a keybind under Esc > Options > Keybindings > AddOns > Alchemist's Cookbook, `/acook` or `/cookbook`, and Esc closes it. The window can be dragged and remembers where you put it.
 - **Settings page** under Esc > Options > AddOns > Alchemist's Cookbook (`/acook options`): Open Cookbook button, show minimap button, the recipe filters, window size (60 to 150%), reset window position, and a list of what's saved on this character.
 
 Recipes are saved per character (`SavedVariablesPerCharacter: AlchemistsCookbookCharDB`); window and minimap settings are per account (`SavedVariables: AlchemistsCookbookDB`).
+
+## Optional Auctionator support
+
+Alchemist's Cookbook is complete on its own. It has no required dependencies, and nothing is missing if you use it by itself.
+
+If you also have [Auctionator](https://www.curseforge.com/wow/addons/auctionator) installed, the two get even better together. The Cookbook notices it automatically — there's nothing to configure, and no setting to turn on:
+
+- **To Craft** and **Profit** appear under the reagents, using Auctionator's last scanned prices. Profit is the product's auction price, minus the 5% auction house cut, minus the craft cost. A loss is shown in red. If a reagent hasn't been priced, the cost is marked `(incomplete)`.
+- Hovering a recipe output or reagent shows the same **Vendor** and **Auction** prices you see on bag tooltips (including a stack/count price).
+
+Without Auctionator, those extra lines simply aren't shown, and the rest of the Cookbook works the same.
 
 ## Slash commands
 
@@ -95,7 +105,7 @@ Both slash commands do the same thing: `/acook` or `/cookbook`.
 
 ## Install
 
-1. For the current stable build, download `AlchemistsCookbook-1.0.4.zip` from the [Latest release](https://github.com/xclickitx/AlchemistsCookbook/releases/latest). **1.0.5** (`AlchemistsCookbook-1.0.5.zip`) is a work-in-progress pre-release if you want to try the Auctionator integration while it's being tested.
+1. Download `AlchemistsCookbook-1.0.5.zip`.
 2. Close World of Warcraft.
 3. Extract the `AlchemistsCookbook` folder into your WoW Forever add-ons directory:
 
@@ -111,7 +121,7 @@ Both slash commands do the same thing: `/acook` or `/cookbook`.
 5. At character select, click AddOns and make sure **Alchemist's Cookbook** is ticked.
 6. Open each of your professions once so the Cookbook can save it.
 
-Once the project is on CurseForge, you will also be able to install and update it with the CurseForge app, with the Forever flavor selected.
+You can also install and update it with the CurseForge app, with the Forever flavor selected.
 
 ## Compatibility
 
@@ -127,7 +137,7 @@ The Cookbook only reads. It never crafts, casts, or opens or closes a profession
 
 [MIT](LICENSE). Copyright (c) 2026 ClickIT.
 
-**AI Disclaimer:** I used an AI assistant to help write the Lua code and draft this text. Versions through 1.0.4 have been tested in-game on WoW Forever. 1.0.5 is a work in progress and is still being tested. No AI-generated art or assets are included; the icons are Blizzard's built-in textures, and the screenshots are from the game.
+**AI Disclaimer:** I used an AI assistant to help write the Lua code and draft this text. 1.0.5 has been tested in-game on WoW Forever 1.60.1. No AI-generated art or assets are included; the icons are Blizzard's built-in textures, and the screenshots are from the game.
 
 ## Development
 

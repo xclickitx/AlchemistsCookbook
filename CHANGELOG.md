@@ -4,10 +4,8 @@ All notable changes to Alchemist's Cookbook are listed here.
 
 ## 1.0.5
 
-- Work in progress: being tested in-game. 1.0.4 remains the current stable release.
-- If Auctionator is loaded, the recipe detail now shows **To Craft** and **Profit** under the reagents, using Auctionator's last scanned prices (vendor buy price when it's the better deal, otherwise the auction price). Profit is the product's auction price, minus the 5% auction house cut, minus the craft cost. A loss is shown in red. Recipes with no item output hide the profit line. If a reagent has no price, the cost is marked `(incomplete)`.
-- Hovering a recipe's output (the icon, the "Makes" item, or the recipe row) or a reagent now shows the same **Vendor** and **Auction** prices Auctionator puts on bag tooltips, including the stack/count price for reagents. The Cookbook still uses its own tooltip (so compare stays limited to the gear you're wearing); it asks Auctionator to add the lines, and won't add them twice. If Auctionator isn't loaded, the tooltip is unchanged.
-- Auctionator is a soft dependency only. If it isn't loaded, the Cookbook looks exactly as it did in 1.0.4: no extra line, no empty gap, and no errors. There is no new setting.
+- Tested in-game on WoW Forever 1.60.1.
+- Optional Auctionator support: if Auctionator is also installed, the Cookbook automatically shows **To Craft** and **Profit** under the reagents (profit after the 5% auction house cut, red for a loss, `(incomplete)` if a reagent isn't priced) and the same **Vendor** / **Auction** prices on item tooltips that Auctionator shows in your bags. Nothing to configure. Alchemist's Cookbook is complete on its own; without Auctionator nothing is missing or different — they just get even better together.
 
 ## 1.0.4
 
